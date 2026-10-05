@@ -1,0 +1,14 @@
+# your personal settings (contains the app token) - never commit
+config.json
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+# Worker
+worker/node_modules/
+worker/.wrangler/
+worker/.dev.vars
+# backups made by scripts/backup.py
+backups/shmai_*/
+.DS_Store

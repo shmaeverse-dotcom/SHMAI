@@ -1,0 +1,11 @@
+{
+  "worker_url": "https://shmai-worker.YOUR-SUBDOMAIN.workers.dev",
+  "app_token": "PASTE-THE-SAME-APP_TOKEN-YOU-SET-ON-THE-WORKER",
+  "user_id": "",
+  "ui_scale": 1.0,
+  "ui_spacing": 1.0,
+  "animations": true,
+  "sound_enabled": true,
+  "select_sound": "",
+  "output_dir": ""
+}

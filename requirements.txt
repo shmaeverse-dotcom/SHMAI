@@ -1,0 +1,15 @@
+# shmAI desktop app: install with
+#   python3 -m pip install -r requirements.txt
+requests>=2.31        # talks to your Cloudflare Worker
+numpy>=1.24           # Audio Analyzer / Key Finder + MIDI preview synth
+pygame>=2.5           # plays audio inside the app (optional; falls back to your music player)
+yt-dlp>=2024.1.1      # Beat Finder: YouTube + SoundCloud search, backup downloader
+mido>=1.3             # optional: handy for inspecting MIDI files (the engine itself has no dependency)
+
+# SoundScrape (SoundCloud / Bandcamp / Mixcloud) needs a special install on
+# modern Python. Run these two lines AFTER the line above (see README):
+#   python3 -m pip install --no-deps soundscrape soundcloud
+#   python3 -m pip install demjson3 mutagen clint simplejson args
+#
+# Also recommended (not a pip package): ffmpeg, which converts downloads to
+# MP3 and lets the analyzer open MP3/M4A/FLAC.  https://ffmpeg.org/download.html

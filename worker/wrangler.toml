@@ -1,0 +1,49 @@
+# ---------------------------------------------------------------------------
+# shmAI backend Worker - Cloudflare configuration
+#
+# This file is safe to commit: it contains NO secrets.
+# Secrets (API keys) are added with `npx wrangler secret put <NAME>`
+# (see README.md in this folder).
+# ---------------------------------------------------------------------------
+
+name = "shmai-worker"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+# Lets the Anthropic SDK use the small bits of Node.js it needs.
+compatibility_flags = ["nodejs_compat"]
+
+# ---- R2 storage for generated audio --------------------------------------
+# Create the bucket once with:  npx wrangler r2 bucket create shmai-audio
+[[r2_buckets]]
+binding = "AUDIO_BUCKET"
+bucket_name = "shmai-audio"
+
+# ---- Per-IP rate limiting --------------------------------------------------
+# Cloudflare's built-in rate limiter. 60 requests per 60 seconds per IP.
+# namespace_id is any number you pick that is unique in YOUR account.
+[[ratelimits]]
+name = "RATE_LIMITER"
+namespace_id = "7301"
+simple = { limit = 60, period = 60 }
+
+# ---- Plain (non-secret) settings ------------------------------------------
+[vars]
+# Claude model used by the Song Writer.
+MODEL_NAME = "claude-sonnet-4-6"
+# How long Claude's replies may be (tokens). 8000 is roughly 6,000 words.
+MAX_TOKENS = "8000"
+# Replicate MusicGen model + version.
+# PLACEHOLDER CHECK: open https://replicate.com/meta/musicgen/versions and copy
+# the newest version id here if this one is ever rejected.
+MUSICGEN_MODEL = "meta/musicgen"
+MUSICGEN_VERSION = "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb"
+# Which MusicGen checkpoint to use: stereo-large | stereo-melody-large | large | melody-large
+MUSICGEN_CHECKPOINT = "stereo-large"
+# Longest clip (seconds) the app may request. Longer = slower + costlier.
+MAX_DURATION = "30"
+
+# Secrets you must add (never put them in this file):
+#   ANTHROPIC_API_KEY     - from https://console.anthropic.com
+#   REPLICATE_API_TOKEN   - from https://replicate.com/account/api-tokens
+#   APP_TOKEN             - any long random password you invent; the desktop
+#                           app sends it so strangers can't use your Worker.
