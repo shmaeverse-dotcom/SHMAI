@@ -12,3 +12,5 @@ worker/.dev.vars
 # backups made by scripts/backup.py
 backups/shmai_*/
 .DS_Store
+shmai_vnext.zip
+shmai_pages.png
