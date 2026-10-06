@@ -21,7 +21,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = ROOT / "logs"
 REQUIRED = ["requests"]                        # the app can't start without these
-RECOMMENDED = ["numpy", "pygame", "yt_dlp", "PIL"]  # features need these
+RECOMMENDED = ["numpy", "pygame", "yt_dlp", "PIL", "tkinterdnd2"]  # features need these
 
 
 def _log_file():
