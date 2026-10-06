@@ -11,7 +11,7 @@ import traceback
 from tkinter import ttk
 
 from . import theme
-from .config import load_config, save_config
+from .config import ASSETS_DIR, load_config, save_config
 from .sound import SoundSystem
 from .theme import BG, PAGES, TEXT_DIM, blend, dim
 from .widgets.fx import glow_text
@@ -42,6 +42,11 @@ class App:
         self.root.configure(bg=BG)
         self.root.geometry("1440x900")
         self.root.minsize(1180, 760)
+        try:  # taskbar / title-bar icon
+            self._icon = tk.PhotoImage(file=str(ASSETS_DIR / "icon.png"))
+            self.root.iconphoto(True, self._icon)
+        except tk.TclError:
+            pass
         self.ttk_style = ttk.Style(self.root)
         try:
             self.ttk_style.theme_use("clam")  # the only built-in theme that takes custom colors well
