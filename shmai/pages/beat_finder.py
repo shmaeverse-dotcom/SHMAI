@@ -22,7 +22,9 @@ from ..config import output_dir
 from ..engines import downloader as dl
 from ..sound import open_folder
 from ..theme import BG, PANEL, TEXT, TEXT_DIM, blend, dim
-from ..widgets.controls import (GlowButton, Panel, label, make_combo, make_entry, make_listbox, make_scrollbar,
+from ..engines import thumbnails
+from ..widgets.result_list import ResultList
+from ..widgets.controls import (GlowButton, Panel, label, make_combo, make_entry,
                                 style_ttk)
 from ..widgets.fx import rounded_rect_points
 from .base import BasePage
@@ -87,15 +89,10 @@ class BeatFinderPage(BasePage):
         self.count_lbl.pack(side="left")
         self.src_lbl = label(head, app, "", font="small", fg=TEXT_DIM)
         self.src_lbl.pack(side="right")
-        body = tk.Frame(self.list_frame, bg=PANEL)
-        body.pack(fill="both", expand=True)
-        self.listbox = make_listbox(body, app, acc, height=12)
-        sb = make_scrollbar(body, acc, self.listbox.yview)
-        self.listbox.configure(yscrollcommand=sb.set)
-        sb.pack(side="right", fill="y")
-        self.listbox.pack(side="left", fill="both", expand=True)
-        self.listbox.bind("<<ListboxSelect>>", lambda e: self._selection_changed())
-        self.listbox.bind("<Double-Button-1>", lambda e: self.download_selected())
+        # results with thumbnails: click = select, double-click / Enter = download
+        self.results_view = ResultList(self.list_frame, app, acc, on_select=lambda i: self._selection_changed(),
+                                       on_activate=lambda i: self.download_selected())
+        self.results_view.pack(fill="both", expand=True)
 
         # ---- bottom status strip with DOWNLOAD ----
         self.bottom = Panel(self.canvas, acc, padx=sp(14), pady=sp(10))
@@ -232,15 +229,12 @@ class BeatFinderPage(BasePage):
             self._stop_progress()
             self._set_busy(False, f"{len(results)} result(s). Select one and press DOWNLOAD (or double-click).")
             self.results = results
-            self.listbox.delete(0, "end")
-            for r in results:
-                mark = "✓ " if r["url"] in self.downloaded else ""
-                artist = f"  —  {r['artist']}" if r["artist"] else ""
-                dur = f"   [{r['duration']}]" if r["duration"] else ""
-                self.listbox.insert("end", f"{mark}{r['title']}{artist}{dur}")
+            self.results_view.set_items(results)
+            for i, r in enumerate(results):
+                if r["url"] in self.downloaded:
+                    self.results_view.mark_downloaded(i)
             self.count_lbl.configure(text=f"TRACKS  ({len(results)})")
-            if results:
-                self.listbox.selection_set(0)
+            self._load_thumbnails(results)
             self._update_buttons()
 
         def fail(msg):
@@ -249,14 +243,28 @@ class BeatFinderPage(BasePage):
 
         self.app.run_async(lambda: dl.search(source, query), done, fail)
 
+    def _load_thumbnails(self, results):
+        """Fetch each result's preview image in the background."""
+        self._thumb_batch = getattr(self, "_thumb_batch", 0) + 1
+        batch = self._thumb_batch
+        size = self.results_view.thumb_size()
+
+        def show(index, pil_image):
+            if batch == self._thumb_batch:  # ignore images from an older search
+                self.results_view.set_thumbnail(index, thumbnails.to_photo(pil_image))
+
+        for i, r in enumerate(results):
+            thumbnails.load_async(r.get("thumbnail"), size,
+                                  lambda img, i=i: self.app.call_soon(show, i, img))
+
     def _stop_progress(self):
         self.progress.stop()
         self.progress.configure(mode="determinate", value=0)
 
     # ---- downloading ---------------------------------------------------------------------
     def _selected(self):
-        sel = self.listbox.curselection()
-        return self.results[sel[0]] if sel and sel[0] < len(self.results) else None
+        i = self.results_view.selected_index()
+        return self.results[i] if i is not None and i < len(self.results) else None
 
     def download_selected(self):
         item = self._selected()
@@ -264,7 +272,7 @@ class BeatFinderPage(BasePage):
             if not item:
                 self.status.configure(text="Select a track first.", fg=TEXT_DIM)
             return
-        idx = self.listbox.curselection()[0]
+        idx = self.results_view.selected_index()
         self._set_busy(True, f"Downloading: {item['title']}")
         self.progress.configure(value=0)
         folder = output_dir(self.app.cfg, "Beat Finder")
@@ -278,11 +286,8 @@ class BeatFinderPage(BasePage):
             self.downloaded[item["url"]] = path
             self.progress.configure(value=1.0)
             self._set_busy(False, f"✓ Saved: {path}")
-            text = self.listbox.get(idx)
-            if not text.startswith("✓"):
-                self.listbox.delete(idx)
-                self.listbox.insert(idx, "✓ " + text)
-                self.listbox.selection_set(idx)
+            if self.results and idx < len(self.results) and self.results[idx]["url"] == item["url"]:
+                self.results_view.mark_downloaded(idx)
             self._update_buttons()
 
         def fail(msg):

@@ -130,6 +130,7 @@ def search(source, query, limit=15):
             "duration": _fmt_duration(entry.get("duration")),
             "url": url,
             "source": source,
+            "thumbnail": _thumb(entry, source),
         })
     if not results:
         raise FinderError("No results. Try different words.")
@@ -151,9 +152,26 @@ def _resolve_url(url):
     if entries:
         return [{"title": e.get("title") or "(untitled)", "artist": e.get("uploader") or info.get("uploader") or "",
                  "duration": _fmt_duration(e.get("duration")), "url": e.get("url") or e.get("webpage_url") or url,
-                 "source": src} for e in entries if e]
+                 "source": src, "thumbnail": _thumb(e, src) or _thumb(info, src)} for e in entries if e]
     return [{"title": info.get("title") or url, "artist": info.get("uploader") or info.get("artist") or "",
-             "duration": _fmt_duration(info.get("duration")), "url": info.get("webpage_url") or url, "source": src}]
+             "duration": _fmt_duration(info.get("duration")), "url": info.get("webpage_url") or url, "source": src,
+             "thumbnail": _thumb(info, src)}]
+
+
+def _thumb(entry, source):
+    """Best thumbnail URL for a result (medium size is plenty for a list)."""
+    if not entry:
+        return ""
+    if source == "YouTube" and entry.get("id") and len(str(entry["id"])) == 11:
+        return f"https://i.ytimg.com/vi/{entry['id']}/mqdefault.jpg"
+    if entry.get("thumbnail"):
+        return entry["thumbnail"]
+    thumbs = [t for t in (entry.get("thumbnails") or []) if t.get("url")]
+    if not thumbs:
+        return ""
+    # prefer something around 320px wide
+    thumbs.sort(key=lambda t: abs((t.get("width") or 320) - 320))
+    return thumbs[0]["url"]
 
 
 def _short(e):

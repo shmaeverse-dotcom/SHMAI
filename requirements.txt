@@ -5,6 +5,7 @@ numpy>=1.24           # Audio Analyzer / Key Finder + MIDI preview synth
 pygame>=2.5           # plays audio inside the app (optional; falls back to your music player)
 yt-dlp>=2024.1.1      # Beat Finder: YouTube + SoundCloud search, backup downloader
 mido>=1.3             # optional: handy for inspecting MIDI files (the engine itself has no dependency)
+pillow>=10.0           # Beat Finder thumbnails + desktop icon (optional: falls back to a music-note tile)
 
 # SoundScrape (SoundCloud / Bandcamp / Mixcloud) needs a special install on
 # modern Python. Run these two lines AFTER the line above (see README):
