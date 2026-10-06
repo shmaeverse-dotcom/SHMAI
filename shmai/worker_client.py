@@ -46,10 +46,12 @@ class WorkerClient:
             raise WorkerError("No App Token set. Open Settings and paste the App Token.")
         return {"X-App-Token": token, "User-Agent": "shmAI-desktop/1.0"}
 
-    def _request(self, method, path, timeout=TIMEOUT_FAST, **kwargs):
+    def _request(self, method, path, timeout=TIMEOUT_FAST, extra_headers=None, **kwargs):
         url = self._base() + path
+        headers = self._headers()
+        headers.update(extra_headers or {})
         try:
-            res = requests.request(method, url, headers=self._headers(), timeout=timeout, **kwargs)
+            res = requests.request(method, url, headers=headers, timeout=timeout, **kwargs)
         except requests.exceptions.Timeout:
             raise WorkerError("The shmAI server took too long to answer. Please try again.") from None
         except requests.exceptions.SSLError:
@@ -110,6 +112,17 @@ class WorkerClient:
         if not data.get("id"):
             raise WorkerError("The server didn't return a job id.")
         return data
+
+    def upload_reference(self, clip_path):
+        """Upload a short reference clip ("make something similar"). Returns its id."""
+        with open(clip_path, "rb") as f:
+            data = f.read()
+        res = self._request("POST", "/melody/reference", timeout=TIMEOUT_DOWNLOAD, data=data,
+                            extra_headers={"Content-Type": "audio/wav"})
+        ref_id = res.json().get("reference_id")
+        if not ref_id:
+            raise WorkerError("The server didn't accept the reference song.")
+        return ref_id
 
     def melody_status(self, job_id):
         return self._request("GET", "/melody/status/" + quote(job_id, safe="")).json()

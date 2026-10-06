@@ -27,6 +27,7 @@ TOKEN = "test-token"
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8799
 JOBS = {}    # id -> {"start": time, "params": {...}}
 FILES = {}   # key -> bytes
+REFS = set()  # uploaded reference clip ids
 
 
 def tone_wav(seconds=4, freq=220.0):
@@ -66,7 +67,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def _body(self):
         n = int(self.headers.get("content-length") or 0)
-        return json.loads(self.rfile.read(n) or b"{}")
+        raw = self.rfile.read(n)
+        if self.headers.get("content-type", "").startswith("audio/"):
+            return {"_bytes": len(raw)}  # reference upload: just count it
+        return json.loads(raw or b"{}")
 
     def do_GET(self):
         if not self._auth():
@@ -119,7 +123,13 @@ class Handler(BaseHTTPRequestHandler):
                      "Writer's notes:\n- Mock reply from scripts/mock_worker.py\n"
                      f"- You said: {msgs[-1]['content'][:80]!r}")
             return self._send(200, {"reply": reply, "stop_reason": "end_turn"})
+        if self.path == "/melody/reference":
+            REFS.add(uuid.uuid4().hex + uuid.uuid4().hex)
+            ref_id = sorted(REFS)[-1]
+            return self._send(200, {"reference_id": ref_id, "ext": "wav"})
         if self.path == "/melody/generate":
+            if body.get("reference_id") and body["reference_id"] not in REFS:
+                return self._err(400, "reference_missing", "The reference clip expired or wasn't found.")
             job_id = uuid.uuid4().hex[:20]
             JOBS[job_id] = {"start": time.time(), "params": body}
             return self._send(200, {"id": job_id, "status": "starting", "prompt": "mock", "duration": 8})

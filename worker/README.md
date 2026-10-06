@@ -8,6 +8,8 @@ desktop app never has to. It does three things:
 | `POST /songwriter/chat` | Song Writer: talks to Claude (`claude-sonnet-4-6`) with the Grammy-winning-songwriter persona |
 | `POST /melody/generate` | Starts a MusicGen job on Replicate (instrumental only) and returns `{ id }` |
 | `GET /melody/status/:id` | Checks the job; when done, copies the audio into R2 and returns `{ status, audioKey }` |
+| `POST /melody/reference` | Uploads a short reference clip for "make something similar" → `{ reference_id }` |
+| `GET /ref/<reference_id>.wav` | **Public** (no token): lets Replicate download that clip. Only works with the 64-character random id, expires after 6 hours, and is deleted when the job ends |
 | `GET /audio/:key` · `DELETE /audio/:key` | Streams or deletes a generated file from R2 |
 | `GET /health` | Quick "is it working?" check |
 
@@ -66,7 +68,9 @@ Then in shmAI: **Settings (gear, top-right) → Worker URL** = that address,
 > step 4, then step 5 again.
 
 ### Updating later
-Change code or `wrangler.toml`, then run `npx wrangler deploy` again.
+If your Worker is connected to GitHub (Workers & Pages → shmai-worker → Settings → Build),
+every push to the `claude/shmai-vnext` branch redeploys it automatically. Otherwise
+change code or `wrangler.toml`, then run `npx wrangler deploy` again.
 To change a key: `npx wrangler secret put NAME` (then no redeploy needed).
 To watch live logs: `npx wrangler tail`.
 
@@ -77,6 +81,7 @@ To watch live logs: `npx wrangler tail`.
 | `MAX_TOKENS` | `8000` | Longest songwriter reply |
 | `MUSICGEN_VERSION` | (a version id) | Pinned MusicGen version. If Replicate ever rejects it, copy the newest id from https://replicate.com/meta/musicgen/versions, or set it to `""` to use the model's latest |
 | `MUSICGEN_CHECKPOINT` | `stereo-large` | MusicGen size/flavor |
+| `MUSICGEN_MELODY_CHECKPOINT` | `stereo-melody-large` | Used when a reference song is dropped in (must be a `*-melody-*` checkpoint) |
 | `MAX_DURATION` | `30` | Longest clip in seconds |
 | `[[ratelimits]] simple.limit` | `60` per 60s | Requests per IP per minute |
 

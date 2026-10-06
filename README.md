@@ -4,10 +4,10 @@ A music-creation desktop app with a Tron / PS3 XMB / original-Xbox look:
 
 | Page | What it does | Runs where |
 |---|---|---|
-| **Home** | PS3 XMB-style menu (neon cyan) | your computer |
-| **Beat Finder** | Search + download from YouTube, SoundCloud, Bandcamp, Mixcloud (Xbox green) | your computer |
-| **Audio Analyzer + Key Finder** | BPM, key, Camelot code, loudness, waveform (purple) | your computer |
-| **Melody Generator** | Cloud MusicGen audio **or** local multi-instrument MIDI (red-orange) | cloud *or* your computer |
+| **Home** | The shmAI cast dancing in a line-up: click a character to open their page (neon cyan) | your computer |
+| **Beat Finder** | Search + download from YouTube, SoundCloud, Bandcamp, Mixcloud, with thumbnails (Xbox green) | your computer |
+| **Audio Analyzer + Key Finder** | Drag in a song: BPM, key, Camelot code, loudness, waveform (purple) | your computer |
+| **Melody Generator** | Cloud MusicGen audio **or** local multi-instrument MIDI; drop in a song to make something similar (red-orange) | cloud *or* your computer |
 | **Song Writer** | Guided questions or freeform chat with a pro-songwriter AI (light blue) | cloud |
 | **Clarity** | Placeholder for the future in-DAW plugin | — |
 
@@ -56,11 +56,21 @@ If you skip it, those sources still work through yt-dlp.
 
 **Linux only:** `sudo apt install python3-tk` if you get "Tkinter is missing".
 
-## 3. Run
+## 3. Run: just click the icon
 
-```
-python3 muse.py
-```
+**One time:** in the shmAI folder, double-click **Create Desktop Icon**:
+- Windows: `Create Desktop Icon.pyw`
+- Mac: `Create Desktop Icon.command` (a Terminal window opens just for this one-time step)
+- Linux: run `python3 scripts/install_shortcut.py`
+
+Tick what you want (Desktop icon, Start menu / Applications, open at login) and
+click **Create icon**. From then on, **double-click the shmAI icon**: no terminal.
+The very first launch installs any missing parts automatically (about a minute;
+a small "Setting up" window shows). On Windows you can also double-click
+`shmAI.pyw` directly. If shmAI ever closes unexpectedly, the details are in
+`logs/shmai.log`.
+
+(Terminal still works too: `python3 muse.py`.)
 
 ## 4. Connect the cloud features
 
@@ -77,8 +87,12 @@ App Token `test-token`. That gives you fake lyrics and a test tone.
 
 ## Using it
 
-- **Navigation:** click the tabs, or press **Ctrl+1 … Ctrl+6**. On Home use
-  the arrow keys + Enter (or the mouse). **Ctrl+,** opens Settings.
+- **Navigation:** click the tabs, or press **Ctrl+1 … Ctrl+6**. On Home, click
+  a character (or use ◀ ▶ + Enter): the executive producer opens Beat Finder,
+  the audio engineer the Analyzer, the producer the Melody Generator, the
+  songwriter the Song Writer, the tech Clarity. **Ctrl+,** opens Settings.
+- **Drag and drop:** drag audio files from Explorer / Finder straight onto the
+  Audio Analyzer or the Melody Generator.
 - **Text size & spacing:** Settings → *Display*. Changes apply right away.
 - **Animations** (starfield, dancers, transitions) can be turned off in Settings.
 - **Selection sound:** to keep your own sound, put your `.wav` at
@@ -97,7 +111,17 @@ Pick an orb at the top:
 
 ### Melody Generator
 Click a category on the left (each shows its current value) and edit it in
-the box under the orb. **ENGINE** picks between:
+the box under the orb.
+
+**SIMILAR TO…**: drop a song onto the page (or click the drop box). shmAI
+measures its tempo and key, copies them into BPM / KEY (switch off with the
+toggle), and:
+- **Cloud:** uploads a 30-second clip privately to your Worker and MusicGen
+  writes a *new* instrumental that follows its melody and feel. The clip is
+  deleted when the job finishes.
+- **Local MIDI:** composes in the same tempo and key.
+
+**ENGINE** picks between:
 - **Cloud (MusicGen):** real instrumental audio, up to 30 s. The orb shows
   progress; the file downloads and plays automatically.
 - **Local MIDI:** instant and free. Makes a `.mid` (lead + chords + bass +

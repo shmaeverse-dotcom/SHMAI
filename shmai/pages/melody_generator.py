@@ -24,10 +24,13 @@ import tkinter as tk
 from tkinter import filedialog
 
 from ..config import output_dir
+from .. import dnd
 from ..engines import midi_engine as me
+from ..engines import reference as ref_engine
 from ..sound import open_folder
 from ..theme import BG, PANEL, TEXT, TEXT_DIM, blend, dim
 from ..widgets.controls import GlowButton, Panel, Toggle, label, make_combo, make_entry, make_scale
+from ..widgets.dropzone import DropZone
 from ..widgets.fx import glow_polygon, glow_text, hex_pill_points, hexagon_points
 from .base import BasePage
 
@@ -39,6 +42,8 @@ POLL_TIMEOUT = 6 * 60
 MENU = [
     ("engine", "ENGINE", "choice", "Cloud makes real instrumental audio with MusicGen (needs your Worker). "
                                    "Local MIDI composes notes on your computer: free, instant, DAW-ready."),
+    ("similar", "SIMILAR TO…", "drop", "Drop a song here and the generator makes a NEW instrumental like it. "
+                                      "Cloud follows its melody and feel; tempo & key are matched for both engines."),
     ("instrument", "INSTRUMENT", "choice", "The lead instrument that carries the melody."),
     ("layers", "LAYERS", "layers", "Add backing parts. Each layer can use its own instrument "
                                    "(multi-instrument)."),
@@ -72,6 +77,9 @@ class MelodyGeneratorPage(BasePage):
         self.last_audio = None       # path of the latest audio file
         self.last_midi = None
         self.flash = 0.0
+        self.ref = None              # prepared reference song (see engines/reference.py)
+        self.ref_busy = False
+        self.match_ref = True        # copy the reference's tempo & key into BPM / KEY
 
         self.v = {
             "engine": tk.StringVar(value=ENGINES[0]),
@@ -125,6 +133,8 @@ class MelodyGeneratorPage(BasePage):
         c.bind("<Button-1>", self._click)
         c.bind("<Up>", lambda e: self._select(self.sel - 1))
         c.bind("<Down>", lambda e: self._select(self.sel + 1))
+        # Dropping a song anywhere on this page also works.
+        dnd.enable_drop(c, self._page_drop)
         self._select(0, sound=False)
         self._refresh_summary()
         self._update_buttons()
@@ -156,6 +166,15 @@ class MelodyGeneratorPage(BasePage):
         elif mid == "duration":
             make_scale(f, app, acc, self.v["duration"], 5, 30, resolution=1, length=360,
                        fmt=lambda v: f"{int(v)} sec").pack(anchor="w")
+        elif mid == "similar":
+            self.dropzone = DropZone(f, app, acc, self.accent2, self.load_reference, title="DROP A SONG HERE",
+                                     height=int(110 * app.fonts.scale))
+            self.dropzone.pack(fill="x")
+            row = tk.Frame(f, bg=PANEL)
+            row.pack(fill="x", pady=(self.sp(8), 0))
+            Toggle(row, app, "Keep my BPM / key", "Match its tempo & key", True, accent=acc,
+                   command=self._set_match).pack(side="left")
+            GlowButton(row, app, "CLEAR", self.clear_reference, accent=acc, bg=PANEL).pack(side="right")
         elif mid == "layers":
             for layer, var, choices in (("chords", self.v["chord_instrument"], me.CHORD_INSTRUMENTS),
                                         ("bass", self.v["bass_instrument"], me.BASS_INSTRUMENTS),
@@ -196,6 +215,8 @@ class MelodyGeneratorPage(BasePage):
 
     # ---- values -----------------------------------------------------------------------
     def _value_text(self, mid):
+        if mid == "similar":
+            return "analyzing…" if self.ref_busy else (self.ref["name"] if self.ref else "—")
         if mid == "layers":
             on = [n.title() for n, v in self.layer_on.items() if v]
             return " + ".join(on) if on else "Lead only"
@@ -238,6 +259,7 @@ class MelodyGeneratorPage(BasePage):
             "duration": max(5, min(30, self._get_int("duration", 15))),
             "reference": self.v["reference"].get().strip(),
             "prompt": self.v["prompt"].get().strip(),
+            "similar": self.ref,
         }
 
     def _refresh_summary(self):
@@ -247,7 +269,63 @@ class MelodyGeneratorPage(BasePage):
         extra = [x for x in (s["style"], s["reference"], s["prompt"]) if x]
         if extra:
             parts.append(" / ".join(extra))
+        if s["similar"]:
+            how = "follows its melody" if s["engine"] != "Local MIDI" else "matches its tempo & key"
+            parts.append(f"Similar to: {s['similar']['name']} ({how})")
         self.summary.configure(text="\n".join(parts))
+
+    # ---- "similar to" reference song -----------------------------------------------------
+    def _page_drop(self, paths):
+        files = dnd.audio_files(paths)
+        if files:
+            self._select(self._menu_index("similar"))
+            self.app.sound.play_select()
+            self.load_reference(files[0])
+
+    def _menu_index(self, mid):
+        return next(i for i, m in enumerate(MENU) if m[0] == mid)
+
+    def load_reference(self, path):
+        """Analyze the dropped song (tempo, key) and cut a 30 s clip to upload."""
+        if self.ref_busy:
+            return
+        self.ref_busy = True
+        self.dropzone.set_busy(f"Listening to {path.name} …")
+
+        def done(ref):
+            self.ref_busy = False
+            self.ref = ref
+            info = " · ".join(x for x in (f"≈ {ref['bpm']} BPM" if ref.get("bpm") else "", ref.get("key") or "",
+                                          ref.get("camelot") or "") if x)
+            self.dropzone.set_loaded(ref["name"], info)
+            if self.match_ref:
+                self._apply_reference()
+            self._refresh_summary()
+
+        def fail(msg):
+            self.ref_busy = False
+            self.dropzone.set_message(msg.splitlines()[0])
+
+        self.app.run_async(lambda: ref_engine.prepare(path), done, fail)
+
+    def _apply_reference(self):
+        """Copy the reference's tempo & key into the BPM and KEY settings."""
+        if not self.ref:
+            return
+        if self.ref.get("bpm"):
+            self.v["bpm"].set(max(60, min(200, self.ref["bpm"])))
+        if self.ref.get("key") in me.KEYS:
+            self.v["key"].set(self.ref["key"])
+
+    def _set_match(self, value):
+        self.match_ref = value
+        if value:
+            self._apply_reference()
+
+    def clear_reference(self):
+        self.ref = None
+        self.dropzone.clear()
+        self._refresh_summary()
 
     # ---- layout + drawing ----------------------------------------------------------------
     def _menu_geometry(self, w, h):
@@ -455,6 +533,20 @@ class MelodyGeneratorPage(BasePage):
         if s["key"] != "Auto":
             params["key"] = s["key"]
         self.job = {"started": time.time(), "folder": folder, "stamp": stamp}
+        if s["similar"]:
+            # 1) upload the 30 s clip, 2) generate following it
+            self._set_state("working", "UPLOADING", 0.03)
+            clip = s["similar"]["clip"]
+
+            def uploaded(ref_id):
+                params["reference_id"] = ref_id
+                self._start_cloud(params)
+
+            self.app.run_async(lambda: self.app.client.upload_reference(clip), uploaded, self._error)
+            return
+        self._start_cloud(params)
+
+    def _start_cloud(self, params):
         self._set_state("working", "SENDING", 0.05)
 
         def started(data):

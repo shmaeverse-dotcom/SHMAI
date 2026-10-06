@@ -19,3 +19,9 @@ test("bad bpm is ignored and empty input still works", () => {
   assert.ok(!p.includes("bpm"));
   assert.ok(p.includes("instrumental only"));
 });
+
+test("reference songs add a 'follow the reference' instruction", () => {
+  const p = buildMusicGenPrompt({ genre: "House", reference_id: "a".repeat(64) });
+  assert.ok(p.includes("following the melody, groove and feel of the reference track"));
+  assert.ok(!buildMusicGenPrompt({ genre: "House" }).includes("reference track"));
+});

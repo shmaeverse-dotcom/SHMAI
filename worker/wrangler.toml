@@ -39,6 +39,9 @@ MUSICGEN_MODEL = "meta/musicgen"
 MUSICGEN_VERSION = "671ac645ce5e552cc63a54a2bbff63fcf798043055d2dac5fc9e36a837eedcfb"
 # Which MusicGen checkpoint to use: stereo-large | stereo-melody-large | large | melody-large
 MUSICGEN_CHECKPOINT = "stereo-large"
+# Checkpoint used when you drop a reference song ("make something similar").
+# Only the *-melody-* checkpoints can follow a reference's melody.
+MUSICGEN_MELODY_CHECKPOINT = "stereo-melody-large"
 # Longest clip (seconds) the app may request. Longer = slower + costlier.
 MAX_DURATION = "30"
 
