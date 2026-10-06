@@ -54,3 +54,20 @@ def prepare(path):
         "key": result.get("key"),
         "camelot": result.get("camelot"),
     }
+
+
+def full_clip(path, seconds=180):
+    """The first `seconds` of the song as a small mono WAV (for Accurate drum
+    copying: the Worker splits the drums out of this)."""
+    y, _duration = an.load_audio(path)
+    np = an.np
+    y = y[: int(seconds * an.SR)]
+    peak = float(np.max(np.abs(y))) or 1.0
+    pcm = (y / peak * 0.9 * 32767).astype("<i2")
+    out = Path(tempfile.gettempdir()) / f"shmai_fullclip_{abs(hash(str(path))) % 10**8}.wav"
+    with wave.open(str(out), "wb") as w:
+        w.setnchannels(1)
+        w.setsampwidth(2)
+        w.setframerate(an.SR)
+        w.writeframes(pcm.tobytes())
+    return str(out)

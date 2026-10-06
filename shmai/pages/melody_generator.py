@@ -19,17 +19,21 @@ Settings screen). Compare against your reference images.
 """
 import math
 import shutil
+import tempfile
 import time
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog
 
 from ..config import output_dir
 from .. import dnd
 from ..engines import midi_engine as me
+from ..engines import drums as drum_engine
 from ..engines import reference as ref_engine
 from ..sound import open_folder
 from ..theme import BG, PANEL, TEXT, TEXT_DIM, blend, dim
 from ..widgets.controls import GlowButton, Panel, Toggle, label, make_combo, make_entry, make_scale
+from ..widgets.drumgrid import DrumGrid
 from ..widgets.dropzone import DropZone
 from ..widgets.fx import glow_polygon, glow_text, hex_pill_points, hexagon_points
 from .base import BasePage
@@ -44,6 +48,8 @@ MENU = [
                                    "Local MIDI composes notes on your computer: free, instant, DAW-ready."),
     ("similar", "SIMILAR TO…", "drop", "Drop a song here and the generator makes a NEW instrumental like it. "
                                       "Cloud follows its melody and feel; tempo & key are matched for both engines."),
+    ("drums", "COPY DRUMS", "drums", "Copies the dropped song's drum loop (4, 8 or 16 bars). Quick = this "
+                                     "computer. Accurate = splits the drums out in the cloud first."),
     ("instrument", "INSTRUMENT", "choice", "The lead instrument that carries the melody."),
     ("layers", "LAYERS", "layers", "Add backing parts. Each layer can use its own instrument "
                                    "(multi-instrument)."),
@@ -80,6 +86,15 @@ class MelodyGeneratorPage(BasePage):
         self.ref = None              # prepared reference song (see engines/reference.py)
         self.ref_busy = False
         self.match_ref = True        # copy the reference's tempo & key into BPM / KEY
+        # drum copying (engines/drums.py)
+        self.drum_on = False
+        self.drum_mode = "quick"     # quick | accurate
+        self.drum_pattern = None
+        self.drum_busy = False
+        self.drum_rerun = False
+        self.drum_stems = {}         # song path -> downloaded drums-only stem (Accurate mode cache)
+        self.kit = None              # {note: samples} from your own drum kit folder
+        self.v_loop = tk.StringVar(value="Auto (4 / 8 / 16)")
 
         self.v = {
             "engine": tk.StringVar(value=ENGINES[0]),
@@ -175,6 +190,32 @@ class MelodyGeneratorPage(BasePage):
             Toggle(row, app, "Keep my BPM / key", "Match its tempo & key", True, accent=acc,
                    command=self._set_match).pack(side="left")
             GlowButton(row, app, "CLEAR", self.clear_reference, accent=acc, bg=PANEL).pack(side="right")
+        elif mid == "drums":
+            row = tk.Frame(f, bg=PANEL)
+            row.pack(fill="x")
+            self.drum_toggle = Toggle(row, app, "OFF", "COPY DRUMS", False, accent=acc, command=self._set_drum_on)
+            self.drum_toggle.pack(side="left")
+            Toggle(row, app, "QUICK", "ACCURATE", False, accent=acc, command=self._set_drum_mode).pack(
+                side="left", padx=self.sp(16))
+            row2 = tk.Frame(f, bg=PANEL)
+            row2.pack(fill="x", pady=self.sp(6))
+            label(row2, app, "Loop", font="small", fg=TEXT_DIM).pack(side="left")
+            make_combo(row2, app, acc, "melody", ["Auto (4 / 8 / 16)", "4 bars", "8 bars", "16 bars"], self.v_loop,
+                       width=16).pack(side="left", padx=self.sp(8))
+            self.kit_btn = GlowButton(row2, app, "KIT: BUILT-IN", self.choose_kit, accent=acc, bg=PANEL)
+            self.kit_btn.pack(side="right")
+            row3 = tk.Frame(f, bg=PANEL)
+            row3.pack(fill="x")
+            self.drum_info = label(row3, app, "", font="small", fg=TEXT_DIM, justify="left", anchor="w")
+            self.drum_info.pack(side="left", fill="x", expand=True)
+            self.drum_save_btn = GlowButton(row3, app, "SAVE MIDI", self.save_drum_midi, accent=acc, bg=PANEL)
+            self.drum_save_btn.pack(side="right")
+            self.drum_play_btn = GlowButton(row3, app, "PREVIEW", self.preview_drums, accent=acc, bg=PANEL)
+            self.drum_play_btn.pack(side="right", padx=self.sp(6))
+            self.drum_grid = DrumGrid(f, app, acc, self.accent2)
+            self.drum_grid.pack(fill="x", pady=(self.sp(6), 0))
+            self.drum_grid.set_message("Turn on COPY DRUMS, then drop a song on SIMILAR TO…")
+            self.v_loop.trace_add("write", lambda *a: self._extract_drums())
         elif mid == "layers":
             for layer, var, choices in (("chords", self.v["chord_instrument"], me.CHORD_INSTRUMENTS),
                                         ("bass", self.v["bass_instrument"], me.BASS_INSTRUMENTS),
@@ -217,6 +258,12 @@ class MelodyGeneratorPage(BasePage):
     def _value_text(self, mid):
         if mid == "similar":
             return "analyzing…" if self.ref_busy else (self.ref["name"] if self.ref else "—")
+        if mid == "drums":
+            if not self.drum_on:
+                return "off"
+            if self.drum_busy:
+                return "listening…"
+            return f"{self.drum_pattern['bars']}-bar loop" if self.drum_pattern else "on"
         if mid == "layers":
             on = [n.title() for n, v in self.layer_on.items() if v]
             return " + ".join(on) if on else "Lead only"
@@ -260,6 +307,7 @@ class MelodyGeneratorPage(BasePage):
             "reference": self.v["reference"].get().strip(),
             "prompt": self.v["prompt"].get().strip(),
             "similar": self.ref,
+            "drum_pattern": self.drum_pattern if self.drum_on else None,
         }
 
     def _refresh_summary(self):
@@ -272,6 +320,8 @@ class MelodyGeneratorPage(BasePage):
         if s["similar"]:
             how = "follows its melody" if s["engine"] != "Local MIDI" else "matches its tempo & key"
             parts.append(f"Similar to: {s['similar']['name']} ({how})")
+        if s["drum_pattern"]:
+            parts.append(f"Drums: copied {s['drum_pattern']['bars']}-bar loop ({s['drum_pattern']['mode']})")
         self.summary.configure(text="\n".join(parts))
 
     # ---- "similar to" reference song -----------------------------------------------------
@@ -301,6 +351,7 @@ class MelodyGeneratorPage(BasePage):
             if self.match_ref:
                 self._apply_reference()
             self._refresh_summary()
+            self._extract_drums()
 
         def fail(msg):
             self.ref_busy = False
@@ -324,8 +375,144 @@ class MelodyGeneratorPage(BasePage):
 
     def clear_reference(self):
         self.ref = None
+        self.drum_pattern = None
         self.dropzone.clear()
+        self.drum_grid.set_message("Turn on COPY DRUMS, then drop a song on SIMILAR TO…")
+        self.drum_info.configure(text="")
         self._refresh_summary()
+
+    # ---- copy drums ---------------------------------------------------------------------
+    def _set_drum_on(self, value):
+        self.drum_on = value
+        if self.drum_toggle.get() != value:
+            self.drum_toggle.set(value)
+        if value and not self.ref:
+            self.drum_grid.set_message("Now drop a song on SIMILAR TO… (or anywhere on this page).")
+        self._refresh_summary()
+        self._extract_drums()
+
+    def _set_drum_mode(self, accurate):
+        self.drum_mode = "accurate" if accurate else "quick"
+        self._extract_drums()
+
+    def _loop_choice(self):
+        text = self.v_loop.get()
+        return "auto" if text.startswith("Auto") else int(text.split()[0])
+
+    def _drum_status(self, text):
+        self.drum_grid.set_message(text)
+
+    def _extract_drums(self):
+        """(Re)copy the drums from the dropped song with the current settings."""
+        if not (self.drum_on and self.ref):
+            return
+        if self.drum_busy:
+            self.drum_rerun = True
+            return
+        self.drum_busy = True
+        self.drum_rerun = False
+        source, mode, loop, hint = self.ref["source"], self.drum_mode, self._loop_choice(), self.ref.get("bpm")
+        say = lambda t: self.app.call_soon(self._drum_status, t)  # noqa: E731
+
+        def work():
+            stem = None
+            if mode == "accurate":
+                stem = self.drum_stems.get(source) or self._separate_drums(source, say)
+            return drum_engine.extract_pattern(source, mode=mode, loop=loop, bpm_hint=hint, stem_path=stem,
+                                               progress=say)
+
+        def done(pattern):
+            self.drum_busy = False
+            self.drum_pattern = pattern
+            self.drum_grid.set_pattern(pattern)
+            how = "Accurate" if pattern["mode"] == "accurate" else "Quick"
+            swing = f" · swing {int(pattern['swing'] * 100)}%" if pattern["swing"] >= 0.05 else ""
+            self.drum_info.configure(text=f"{pattern['bars']}-bar loop · {pattern['bpm']:.1f} BPM{swing} · "
+                                          f"repeats {int(pattern['confidence'] * 100)}% alike · {how}")
+            if self.match_ref:
+                self.v["bpm"].set(int(round(pattern["bpm"])))
+            self._refresh_summary()
+            if self.drum_rerun:
+                self._extract_drums()
+
+        def fail(msg):
+            self.drum_busy = False
+            self._drum_status(msg.splitlines()[0])
+            if self.drum_rerun:
+                self._extract_drums()
+
+        self.app.run_async(work, done, fail)
+
+    def _separate_drums(self, source, say):
+        """Accurate mode (runs on the background thread): upload the song, let
+        the Worker split the drums out with Demucs, download the drums track."""
+        client = self.app.client
+        say("Preparing the song…")
+        clip = ref_engine.full_clip(source)
+        say("Uploading the song (private)…")
+        ref_id = client.upload_reference(clip)
+        job = client.drums_separate(ref_id)
+        started = time.time()
+        while True:
+            time.sleep(POLL_SECONDS)
+            data = client.drums_status(job)
+            status = data.get("status")
+            if status == "succeeded" and data.get("audioKey"):
+                break
+            if status in ("failed", "canceled"):
+                raise drum_engine.DrumError(data.get("error") or "The drum separation didn't finish. Try Quick mode.")
+            if time.time() - started > POLL_TIMEOUT:
+                raise drum_engine.DrumError("Drum separation is taking too long. Try again, or use Quick mode.")
+            say(f"Separating the drums in the cloud… {int(time.time() - started)}s")
+        say("Downloading the drums track…")
+        dest = Path(tempfile.gettempdir()) / f"shmai_drums_{job}.wav"
+        client.download_audio(data["audioKey"], dest)
+        try:
+            client.delete_audio(data["audioKey"])
+        except Exception:
+            pass
+        self.drum_stems[source] = str(dest)
+        return str(dest)
+
+    def choose_kit(self):
+        folder = filedialog.askdirectory(parent=self, title="Choose a folder with your drum samples (.wav)")
+        if not folder:
+            if self.kit is not None:  # cancel = go back to the built-in sounds
+                self.kit = None
+                self.kit_btn.configure_text("KIT: BUILT-IN")
+            return
+
+        def done(kit):
+            if not kit:
+                self.drum_info.configure(text="No kick / snare / hat .wav files found in that folder "
+                                              "(names should contain kick, snare or clap, hat, open).")
+                return
+            self.kit = kit
+            self.kit_btn.configure_text(f"KIT: {Path(folder).name[:14].upper()} ({len(kit)}/4)")
+
+        self.app.run_async(lambda: drum_engine.load_kit(folder), done, lambda m: self.drum_info.configure(text=m))
+
+    def preview_drums(self):
+        if not self.drum_pattern:
+            return
+        pattern, kit = self.drum_pattern, self.kit
+        out = Path(tempfile.gettempdir()) / "shmai_drum_preview.wav"
+
+        def work():
+            return drum_engine.render_wav(pattern, out, total_bars=max(8, pattern["bars"] * 2), kit=kit)
+
+        self.app.run_async(work, lambda p: self.app.sound.play_file(p), lambda m: self.drum_info.configure(text=m))
+
+    def save_drum_midi(self):
+        if not self.drum_pattern:
+            return
+        p = self.drum_pattern
+        dest = filedialog.asksaveasfilename(parent=self, defaultextension=".mid", filetypes=[("MIDI", "*.mid")],
+                                            initialdir=str(output_dir(self.app.cfg, "Melody Generator")),
+                                            initialfile=f"drums_{p['bars']}bar_{int(round(p['bpm']))}bpm.mid")
+        if dest:
+            drum_engine.export_midi(p, dest)
+            self.drum_info.configure(text=f"Saved drum MIDI: {Path(dest).name}")
 
     # ---- layout + drawing ----------------------------------------------------------------
     def _menu_geometry(self, w, h):
@@ -532,7 +719,9 @@ class MelodyGeneratorPage(BasePage):
         }
         if s["key"] != "Auto":
             params["key"] = s["key"]
-        self.job = {"started": time.time(), "folder": folder, "stamp": stamp}
+        if s["drum_pattern"]:
+            params["no_drums"] = True  # leave room: the copied drums go on top afterwards
+        self.job = {"started": time.time(), "folder": folder, "stamp": stamp, "drums": s["drum_pattern"]}
         if s["similar"]:
             # 1) upload the 30 s clip, 2) generate following it
             self._set_state("working", "UPLOADING", 0.03)
@@ -588,6 +777,8 @@ class MelodyGeneratorPage(BasePage):
         dest = job["folder"] / f"melody_{job['stamp']}_{self.v['genre'].get().replace(' ', '')}.{ext}"
         self._set_state("working", "DOWNLOADING", 0.92)
 
+        pattern, kit = job.get("drums"), self.kit
+
         def work():
             path = self.app.client.download_audio(
                 key, dest, progress=lambda p: self.app.call_soon(self._set_progress, 0.92 + 0.08 * p))
@@ -595,6 +786,11 @@ class MelodyGeneratorPage(BasePage):
                 self.app.client.delete_audio(key)  # tidy up R2: the file is on your computer now
             except Exception:
                 pass
+            if pattern:  # layer the copied drum loop on top, in time with the music
+                mixed = dest.with_name(dest.stem + "_with_drums.wav")
+                drum_engine.mix_under(path, pattern, mixed, kit=kit)
+                drum_engine.export_midi(pattern, dest.with_name(dest.stem + "_drums.mid"))
+                return mixed
             return path
 
         def done(path):

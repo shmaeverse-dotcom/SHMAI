@@ -121,6 +121,25 @@ toggle), and:
   deleted when the job finishes.
 - **Local MIDI:** composes in the same tempo and key.
 
+**COPY DRUMS**: switch it on and the dropped song's drum pattern is copied:
+kicks, snares, hi-hats, open hats, 1/32 hi-hat rolls and swing, written onto a
+step grid you can see. It looks for the song's **4-, 8- or 16-bar loop**
+(Auto checks all three and notices regular fills / switch-ups), or you can
+force a length.
+- **Quick**: runs on your computer, free and instant-ish (a few seconds).
+- **Accurate**: your Worker splits the drums out of the song first (Demucs on
+  Replicate, a few cents, ~1 minute) for a cleaner copy.
+- **KIT**: play the pattern with the built-in drums or pick a folder of your
+  own samples (files named with kick / snare or clap / hat / open).
+- **PREVIEW** plays the loop; **SAVE MIDI** exports it for your DAW.
+- When you GENERATE: the MIDI engine uses the copied loop (and the bass follows
+  its kicks); the Cloud engine asks MusicGen for no drums, then layers the
+  copied loop on top in time (`…_with_drums.wav`) and saves the drum MIDI next to it.
+
+Heads-up: re-playing a drum *pattern* is everyday producer practice; the sounds
+are your kit, not the original recording. Open vs. closed hi-hats are the
+least reliable part of the copy, so check those by ear.
+
 **ENGINE** picks between:
 - **Cloud (MusicGen):** real instrumental audio, up to 30 s. The orb shows
   progress; the file downloads and plays automatically.

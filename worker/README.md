@@ -10,6 +10,8 @@ desktop app never has to. It does three things:
 | `GET /melody/status/:id` | Checks the job; when done, copies the audio into R2 and returns `{ status, audioKey }` |
 | `POST /melody/reference` | Uploads a short reference clip for "make something similar" → `{ reference_id }` |
 | `GET /ref/<reference_id>.wav` | **Public** (no token): lets Replicate download that clip. Only works with the 64-character random id, expires after 6 hours, and is deleted when the job ends |
+| `POST /drums/separate` | Accurate drum copy: runs Demucs on an uploaded song (`{ reference_id }`) → `{ id }` |
+| `GET /drums/status/:id` | Polls it; when done the drums-only track is saved to R2 → `{ status, audioKey }` |
 | `GET /audio/:key` · `DELETE /audio/:key` | Streams or deletes a generated file from R2 |
 | `GET /health` | Quick "is it working?" check |
 
@@ -82,6 +84,7 @@ To watch live logs: `npx wrangler tail`.
 | `MUSICGEN_VERSION` | (a version id) | Pinned MusicGen version. If Replicate ever rejects it, copy the newest id from https://replicate.com/meta/musicgen/versions, or set it to `""` to use the model's latest |
 | `MUSICGEN_CHECKPOINT` | `stereo-large` | MusicGen size/flavor |
 | `MUSICGEN_MELODY_CHECKPOINT` | `stereo-melody-large` | Used when a reference song is dropped in (must be a `*-melody-*` checkpoint) |
+| `DEMUCS_MODEL` / `DEMUCS_VERSION` / `DEMUCS_INPUT` | `ryan5453/demucs` / latest / `{"stem":"drums","output_format":"wav"}` | Drum-splitting model for Accurate drum copying. If Replicate rejects an input name, adjust `DEMUCS_INPUT` to match the model's API page |
 | `MAX_DURATION` | `30` | Longest clip in seconds |
 | `[[ratelimits]] simple.limit` | `60` per 60s | Requests per IP per minute |
 

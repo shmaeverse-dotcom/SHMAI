@@ -156,9 +156,13 @@ def compose(settings, seed=None):
         notes = []
         groove = DRUMS[GENRE_GROOVE.get(genre, "boom_bap")]
         kicks = groove.get(36, [0, 8])
+        copied = settings.get("drum_pattern")
+        if copied:  # follow the copied drum loop's kicks, bar by bar
+            from .drums import kick_steps_by_bar
+            copied_kicks = kick_steps_by_bar(copied)
         for bar in range(bars):
             p = degree_pitch(chord_at(bar), 2)
-            hits = kicks or [0, 8]
+            hits = (copied_kicks.get(bar % copied["bars"]) if copied else None) or kicks or [0, 8]
             for i, step in enumerate(hits):
                 nxt = hits[i + 1] if i + 1 < len(hits) else 16
                 length = max(1, nxt - step) / 4.0
@@ -167,7 +171,11 @@ def compose(settings, seed=None):
         song.tracks.append(_track("Bass", name, 2, notes))
 
     # ---- drums ---------------------------------------------------------------------
-    if layers.get("drums", True) and GENRE_GROOVE.get(genre, "boom_bap") != "none":
+    if settings.get("drum_pattern"):
+        # a drum loop copied from a song (see engines/drums.py)
+        from .drums import pattern_notes
+        song.tracks.append(_track("Drums", "Drums", 9, pattern_notes(settings["drum_pattern"], bars), program=0))
+    elif layers.get("drums", True) and GENRE_GROOVE.get(genre, "boom_bap") != "none":
         pattern = DRUMS[GENRE_GROOVE.get(genre, "boom_bap")]
         notes = []
         for bar in range(bars):

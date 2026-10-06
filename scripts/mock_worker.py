@@ -27,7 +27,8 @@ TOKEN = "test-token"
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8799
 JOBS = {}    # id -> {"start": time, "params": {...}}
 FILES = {}   # key -> bytes
-REFS = set()  # uploaded reference clip ids
+REFS = {}    # uploaded reference clip id -> bytes
+DRUM_JOBS = {}  # drum separation job id -> (start time, reference id)
 
 
 def tone_wav(seconds=4, freq=220.0):
@@ -69,7 +70,7 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("content-length") or 0)
         raw = self.rfile.read(n)
         if self.headers.get("content-type", "").startswith("audio/"):
-            return {"_bytes": len(raw)}  # reference upload: just count it
+            return {"_raw": raw}  # reference upload
         return json.loads(raw or b"{}")
 
     def do_GET(self):
@@ -78,6 +79,16 @@ class Handler(BaseHTTPRequestHandler):
         path = self.path.rstrip("/")
         if path == "/health":
             return self._send(200, {"ok": True, "service": "mock-worker", "model": "mock-model"})
+        if path.startswith("/drums/status/"):
+            job_id = unquote(path.split("/")[-1])
+            if job_id not in DRUM_JOBS:
+                return self._err(404, "not_found", "No job with that id.")
+            started, ref_id = DRUM_JOBS[job_id]
+            if time.time() - started < 3:
+                return self._send(200, {"status": "processing"})
+            key = f"audio/{job_id}-drums.wav"
+            FILES[key] = REFS.get(ref_id, b"")  # mock: the "stem" is just the uploaded song
+            return self._send(200, {"status": "succeeded", "audioKey": key})
         if path.startswith("/melody/status/"):
             job_id = unquote(path.split("/")[-1])
             job = JOBS.get(job_id)
@@ -124,9 +135,15 @@ class Handler(BaseHTTPRequestHandler):
                      f"- You said: {msgs[-1]['content'][:80]!r}")
             return self._send(200, {"reply": reply, "stop_reason": "end_turn"})
         if self.path == "/melody/reference":
-            REFS.add(uuid.uuid4().hex + uuid.uuid4().hex)
-            ref_id = sorted(REFS)[-1]
+            ref_id = uuid.uuid4().hex + uuid.uuid4().hex
+            REFS[ref_id] = body.get("_raw", b"")
             return self._send(200, {"reference_id": ref_id, "ext": "wav"})
+        if self.path == "/drums/separate":
+            if body.get("reference_id") not in REFS:
+                return self._err(400, "reference_missing", "The uploaded song expired or wasn't found.")
+            job_id = uuid.uuid4().hex[:20]
+            DRUM_JOBS[job_id] = (time.time(), body["reference_id"])
+            return self._send(200, {"id": job_id, "status": "starting"})
         if self.path == "/melody/generate":
             if body.get("reference_id") and body["reference_id"] not in REFS:
                 return self._err(400, "reference_missing", "The reference clip expired or wasn't found.")

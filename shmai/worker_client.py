@@ -124,6 +124,16 @@ class WorkerClient:
             raise WorkerError("The server didn't accept the reference song.")
         return ref_id
 
+    def drums_separate(self, reference_id):
+        """Accurate drum copy: ask the Worker to split the drums out (Demucs)."""
+        data = self._request("POST", "/drums/separate", json={"reference_id": reference_id}).json()
+        if not data.get("id"):
+            raise WorkerError("The server didn't start the drum separation.")
+        return data["id"]
+
+    def drums_status(self, job_id):
+        return self._request("GET", "/drums/status/" + quote(job_id, safe="")).json()
+
     def melody_status(self, job_id):
         return self._request("GET", "/melody/status/" + quote(job_id, safe="")).json()
 
