@@ -8,6 +8,8 @@
 //   POST   /melody/reference       upload a reference clip ("make something similar")
 //   GET    /melody/status/:id      poll a MusicGen job; saves audio to R2
 //   GET    /ref/:id.wav            PUBLIC (random id): lets Replicate fetch the clip
+//   POST   /drums/separate         Accurate drum copy: run Demucs on an uploaded song
+//   GET    /drums/status/:id       poll it; the drums-only track lands in R2
 //   GET    /audio/:key             download/stream audio from R2
 //   DELETE /audio/:key             delete audio from R2
 // ---------------------------------------------------------------------------
@@ -16,6 +18,7 @@ import { handleSongwriterChat } from "./songwriter.js";
 import { handleMelodyGenerate, handleMelodyStatus } from "./melody.js";
 import { handleAudioGet, handleAudioDelete } from "./audio.js";
 import { handleReferenceGet, handleReferenceUpload } from "./reference.js";
+import { handleDrumSeparate, handleDrumStatus } from "./drums.js";
 
 async function route(request, env) {
   const url = new URL(request.url);
@@ -48,6 +51,14 @@ async function route(request, env) {
   if (path === "/melody/reference") {
     if (method !== "POST") throw new HttpError(405, "method_not_allowed", "Use POST.");
     return handleReferenceUpload(request, env);
+  }
+  if (path === "/drums/separate") {
+    if (method !== "POST") throw new HttpError(405, "method_not_allowed", "Use POST.");
+    return handleDrumSeparate(request, env);
+  }
+  if (path.startsWith("/drums/status/")) {
+    if (method !== "GET") throw new HttpError(405, "method_not_allowed", "Use GET.");
+    return handleDrumStatus(decodeURIComponent(path.slice("/drums/status/".length)), env);
   }
   if (path.startsWith("/melody/status/")) {
     if (method !== "GET") throw new HttpError(405, "method_not_allowed", "Use GET.");

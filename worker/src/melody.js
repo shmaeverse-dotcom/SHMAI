@@ -9,7 +9,7 @@ import { REF_TTL_HOURS, findReference } from "./reference.js";
 
 const REPLICATE_API = "https://api.replicate.com/v1";
 // REPLICATE_API_URL can point at a stand-in server for testing; normally unset.
-const api = (env) => env.REPLICATE_API_URL || REPLICATE_API;
+export const api = (env) => env.REPLICATE_API_URL || REPLICATE_API;
 
 /** Trim a text field and cap its length so prompts stay sensible. */
 function text(value, max = 200) {
@@ -42,6 +42,8 @@ export function buildMusicGenPrompt(body) {
   if (key) parts.push(`in the key of ${key}`);
   if (prompt) parts.push(prompt);
   if (body.reference_id) parts.push("following the melody, groove and feel of the reference track");
+  // When the app layers copied drums on top, ask MusicGen to leave room for them.
+  if (body.no_drums) parts.push("no drums, no percussion");
   // Always instrumental: MusicGen can't sing words, but we steer it away from
   // vocal-like sounds too.
   parts.push("instrumental only, no vocals, no singing, high quality studio mix");
@@ -49,7 +51,7 @@ export function buildMusicGenPrompt(body) {
 }
 
 /** fetch() that turns "no internet / host down" into a friendly error. */
-async function safeFetch(url, init, what) {
+export async function safeFetch(url, init, what) {
   try {
     return await fetch(url, init);
   } catch {
@@ -57,7 +59,7 @@ async function safeFetch(url, init, what) {
   }
 }
 
-function replicateHeaders(env) {
+export function replicateHeaders(env) {
   if (!env.REPLICATE_API_TOKEN) {
     throw new HttpError(500, "not_configured",
       "Server is missing REPLICATE_API_TOKEN. Run: npx wrangler secret put REPLICATE_API_TOKEN");
@@ -69,7 +71,7 @@ function replicateHeaders(env) {
 }
 
 /** Turn a failed Replicate reply into a clear error for the app. */
-async function replicateError(res) {
+export async function replicateError(res) {
   let detail = "";
   try {
     const data = await res.json();
@@ -146,20 +148,35 @@ export async function handleMelodyGenerate(request, env) {
 }
 
 export async function handleMelodyStatus(id, env) {
+  return predictionStatus(id, env, { what: "Generation" });
+}
+
+/** Default output picker: MusicGen returns one file URL (or a list of one). */
+function firstUrl(output) {
+  return Array.isArray(output) ? output[0] : output;
+}
+
+/**
+ * Check a Replicate job. When finished, copy its audio into R2 and return
+ * { status: "succeeded", audioKey }. Shared by melodies and drum separation.
+ *   suffix  added to the R2 file name (e.g. "-drums")
+ *   pick    function(output) -> the URL to keep
+ */
+export async function predictionStatus(id, env, { suffix = "", pick = firstUrl, what = "Job" } = {}) {
   if (!/^[a-z0-9]{6,64}$/i.test(id)) {
     throw new HttpError(400, "bad_request", "That job id doesn't look right.");
   }
 
   // Already copied to R2 on an earlier poll? Answer straight away.
   for (const ext of ["wav", "mp3"]) {
-    const key = `audio/${id}.${ext}`;
+    const key = `audio/${id}${suffix}.${ext}`;
     if (await env.AUDIO_BUCKET.head(key)) {
       return json({ status: "succeeded", audioKey: key });
     }
   }
 
   const res = await safeFetch(`${api(env)}/predictions/${id}`, { headers: replicateHeaders(env) }, "Replicate");
-  if (res.status === 404) throw new HttpError(404, "not_found", "No generation job with that id.");
+  if (res.status === 404) throw new HttpError(404, "not_found", "No job with that id.");
   if (!res.ok) throw await replicateError(res);
   const prediction = await res.json();
 
@@ -167,7 +184,7 @@ export async function handleMelodyStatus(id, env) {
     await cleanupReference(id, env);
     return json({
       status: prediction.status,
-      error: prediction.error ? String(prediction.error).slice(0, 400) : "Generation did not finish.",
+      error: prediction.error ? String(prediction.error).slice(0, 400) : `${what} did not finish.`,
     });
   }
   if (prediction.status !== "succeeded") {
@@ -175,8 +192,7 @@ export async function handleMelodyStatus(id, env) {
     return json({ status: prediction.status });
   }
 
-  // Output is a single file URL (some versions return a list).
-  const outputUrl = Array.isArray(prediction.output) ? prediction.output[0] : prediction.output;
+  const outputUrl = pick(prediction.output);
   // Real Replicate always returns https links; plain http is allowed only
   // when testing against a stand-in server (REPLICATE_API_URL set).
   const okScheme = typeof outputUrl === "string" &&
@@ -185,13 +201,13 @@ export async function handleMelodyStatus(id, env) {
     throw new HttpError(502, "upstream_error", "Replicate finished but returned no audio file.");
   }
   const ext = outputUrl.toLowerCase().includes(".mp3") ? "mp3" : "wav";
-  const key = `audio/${id}.${ext}`;
+  const key = `audio/${id}${suffix}.${ext}`;
 
   const audio = await safeFetch(outputUrl, {}, "Replicate's file storage");
   if (!audio.ok) {
     throw new HttpError(502, "upstream_error", "Couldn't download the finished audio from Replicate.");
   }
-  // Clips are at most a few MB, so reading into memory is fine and avoids
+  // Files are at most a few MB, so reading into memory is fine and avoids
   // R2's "stream must have a known length" rule.
   const bytes = await audio.arrayBuffer();
   await env.AUDIO_BUCKET.put(key, bytes, {

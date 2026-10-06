@@ -42,6 +42,12 @@ MUSICGEN_CHECKPOINT = "stereo-large"
 # Checkpoint used when you drop a reference song ("make something similar").
 # Only the *-melody-* checkpoints can follow a reference's melody.
 MUSICGEN_MELODY_CHECKPOINT = "stereo-melody-large"
+# Drum copying, "Accurate" mode: Demucs stem separation on Replicate.
+# Leave DEMUCS_VERSION empty to always use the model's newest version.
+# DEMUCS_INPUT = extra settings sent to the model (the song link is added automatically).
+DEMUCS_MODEL = "ryan5453/demucs"
+DEMUCS_VERSION = ""
+DEMUCS_INPUT = '{"stem": "drums", "output_format": "wav"}'
 # Longest clip (seconds) the app may request. Longer = slower + costlier.
 MAX_DURATION = "30"
 
