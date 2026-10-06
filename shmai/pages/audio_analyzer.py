@@ -22,6 +22,7 @@ import math
 import tkinter as tk
 from tkinter import filedialog
 
+from .. import dnd
 from ..engines import analyzer as an
 from ..theme import BG, TEXT, TEXT_DIM, blend, dim
 from ..widgets.controls import GlowButton, label
@@ -61,6 +62,13 @@ class AudioAnalyzerPage(BasePage):
         self._update_view_buttons()
         self.run_btn.set_enabled(False)
 
+        # Drag-and-drop: drop an audio file anywhere on the page to analyze it.
+        self.drag_over = False
+        self.drop_box = None
+        self.dnd_on = dnd.enable_drop(self.canvas, self._dropped, on_enter=lambda: self._set_drag(True),
+                                      on_leave=lambda: self._set_drag(False))
+        self.canvas.bind("<Button-1>", self._click)
+
     # ---- page events -----------------------------------------------------------------
     def on_show(self, view=None, **kwargs):
         if view == "key":
@@ -90,6 +98,29 @@ class AudioAnalyzerPage(BasePage):
         if path:
             self.path = path
             self.run_analysis()
+
+    def _set_drag(self, over):
+        self.drag_over = over
+        self.draw()
+
+    def _dropped(self, paths):
+        files = dnd.audio_files(paths)
+        if not files:
+            self.error = "That doesn't look like an audio file. Try WAV, MP3, M4A, FLAC, OGG or AIFF."
+            self.draw()
+            return
+        self.app.sound.play_select()
+        self.path = str(files[0])
+        self.run_analysis()
+
+    def _click(self, e):
+        """Clicking the empty drop zone opens the file browser."""
+        box = self.drop_box
+        if self.view == "analyze" and not self.busy and not self.result and box:
+            x1, y1, x2, y2 = box
+            if x1 <= e.x <= x2 and y1 <= e.y <= y2:
+                self.app.sound.play_select()
+                self.load()
 
     def run_analysis(self):
         if self.busy or not self.path:
@@ -131,6 +162,13 @@ class AudioAnalyzerPage(BasePage):
         c.delete(TAG)
         if self.view == "key":
             self._draw_key_finder(c, w, h)
+            if self.drag_over:  # glowing frame: "drop it anywhere"
+                m, top = self.sp(14), self._content_top() - self.sp(10)
+                for g in range(4, 0, -1):
+                    c.create_polygon(rounded_rect_points(m - g * 3, top - g * 3, w - m + g * 3, h - m + g * 3, 24),
+                                     outline=dim(self.accent2, 0.2 * (5 - g)), fill="", width=3, smooth=True, tags=TAG)
+                glow_text(c, w / 2, top + self.sp(30), "DROP TO FIND THE KEY", self.app.fonts["h1"], self.accent2,
+                          tags=TAG)
         else:
             self._draw_analyze(c, w, h)
         c.tag_raise(TAG, "starfield")
@@ -147,13 +185,22 @@ class AudioAnalyzerPage(BasePage):
         top = self._content_top()
         x1, x2 = m, w - m
         wy1, wy2 = top, top + (h - top) * 0.42
-        # waveform panel
-        c.create_polygon(rounded_rect_points(x1, wy1, x2, wy2, 18), outline=acc, fill=blend(BG, acc, 0.06), width=2,
+        # waveform panel (doubles as the drop zone)
+        self.drop_box = (x1, wy1, x2, wy2)
+        if self.drag_over:
+            for g in range(4, 0, -1):
+                c.create_polygon(rounded_rect_points(x1 - g * 3, wy1 - g * 3, x2 + g * 3, wy2 + g * 3, 18 + g * 3),
+                                 outline=dim(acc2, 0.2 * (5 - g)), fill="", width=3, smooth=True, tags=TAG)
+        c.create_polygon(rounded_rect_points(x1, wy1, x2, wy2, 18), outline=acc2 if self.drag_over else acc,
+                         fill=blend(BG, acc, 0.2 if self.drag_over else 0.06), width=3 if self.drag_over else 2,
                          smooth=True, tags=TAG)
         mid = (wy1 + wy2) / 2
-        c.create_line(x1 + 20, mid, x2 - 20, mid, fill=dim(acc, 0.35), tags=TAG)
         r = self.result
-        if self.busy:
+        if r and not self.drag_over:
+            c.create_line(x1 + 20, mid, x2 - 20, mid, fill=dim(acc, 0.35), tags=TAG)
+        if self.drag_over:
+            glow_text(c, (x1 + x2) / 2, mid, "RELEASE TO ANALYZE", f["h1"], acc2, tags=TAG)
+        elif self.busy:
             self._scanner(c, x1, wy1, x2, wy2)
         elif r:
             top_pts, bot_pts = [], []
@@ -173,9 +220,19 @@ class AudioAnalyzerPage(BasePage):
             px = x1 + 20 + (x2 - x1 - 40) * ((self.t * 0.08) % 1.0)
             c.create_line(px, wy1 + 8, px, wy2 - 8, fill=dim(acc2, 0.8), width=2, tags=TAG)
         else:
-            msg = self.error or "Load a track (WAV, MP3, M4A, FLAC...) to see its waveform, BPM and key."
-            c.create_text((x1 + x2) / 2, mid, text=msg, font=f["body"], fill="#ff8080" if self.error else TEXT_DIM,
-                          width=(x2 - x1) * 0.8, justify="center", tags=TAG)
+            # empty: dashed drop target
+            c.create_polygon(rounded_rect_points(x1 + 14, wy1 + 14, x2 - 14, wy2 - 14, 12), outline=dim(acc, 0.7),
+                             fill="", width=2, dash=(12, 8), smooth=True, tags=TAG)
+            if self.error:
+                c.create_text((x1 + x2) / 2, mid, text=self.error, font=f["body"], fill="#ff8080",
+                              width=(x2 - x1) * 0.8, justify="center", tags=TAG)
+            else:
+                head = "DROP AN AUDIO FILE HERE" if self.dnd_on else "CLICK TO CHOOSE AN AUDIO FILE"
+                glow_text(c, (x1 + x2) / 2, mid - f.size("h2") * 0.9, head, f["h2"], acc2, tags=TAG, strength=0.7)
+                sub = ("or click to browse  ·  WAV, MP3, M4A, FLAC, OGG, AIFF" if self.dnd_on
+                       else "WAV, MP3, M4A, FLAC, OGG, AIFF  (install tkinterdnd2 for drag-and-drop)")
+                c.create_text((x1 + x2) / 2, mid + f.size("body") * 1.1, text=sub, font=f["body"], fill=TEXT_DIM,
+                              tags=TAG)
 
         # stat cards
         cards = [
@@ -265,7 +322,8 @@ class AudioAnalyzerPage(BasePage):
             c.create_text(cx, cy + r * 0.2, text=res["camelot"], font=f["mono"], fill=acc2, tags=TAG)
         else:
             glow_text(c, cx, cy - 10, "NO TRACK", f["h2"], acc2, tags=TAG)
-            c.create_text(cx, cy + r * 0.18, text="press LOAD TRACK", font=f["small"], fill=TEXT_DIM, tags=TAG)
+            c.create_text(cx, cy + r * 0.18, text="drop a file or press LOAD" if self.dnd_on else "press LOAD TRACK",
+                          font=f["small"], fill=TEXT_DIM, tags=TAG)
 
         # right info column
         ix = cx + ring + 90

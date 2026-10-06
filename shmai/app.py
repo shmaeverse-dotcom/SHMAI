@@ -10,7 +10,7 @@ import tkinter as tk
 import traceback
 from tkinter import ttk
 
-from . import theme
+from . import dnd, theme
 from .config import ASSETS_DIR, load_config, save_config
 from .sound import SoundSystem
 from .theme import BG, PAGES, TEXT_DIM, blend, dim
@@ -37,7 +37,7 @@ class App:
         self.cfg = load_config()
         theme.install_bundled_fonts()  # must run before Tk() exists
 
-        self.root = tk.Tk()
+        self.root = dnd.make_root()  # a normal Tk window, plus file drag-and-drop when available
         self.root.title("shmAI")
         self.root.configure(bg=BG)
         self.root.geometry("1440x900")
