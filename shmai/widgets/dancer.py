@@ -1,35 +1,64 @@
 """
-Dancing anime-style (chibi) character, drawn live on a page's canvas.
+Dancing anime characters, drawn live on a page's canvas.
 
-Like the dancing-character plugins in FL Studio: a little figure grooves in
-the corner of every page. Each page gets a character that fits its role:
+Style (from the owner's reference images): modern TV-anime look with clean
+dark line art, long glossy hair with a shine band, big sparkly eyes with a
+heavy upper lash line, blush, and warm/tan skin tones. Adult characters in
+role outfits, one per page:
 
-    artist      Home            microphone, long pink hair, cropped jacket
-    executive   Beat Finder     sunglasses, suit, tie and gold chain
-    engineer    Audio Analyzer  big studio headphones, hoodie
-    producer    Melody Gen      backwards cap, drumstick, headphones on neck
-    songwriter  Song Writer     beret, notebook and pencil
-    tech        Clarity         holo-visor and cable
+    artist      Home            long black hair + pink ribbons, blue eyes, mic
+    executive   Beat Finder     glasses, twin tails with red tips, blazer + tie
+    engineer    Audio Analyzer  white blunt-bang bob, pale skin, studio headphones
+    producer    Melody Gen      long black hair + silver clips, smug grin, drumsticks
+    songwriter  Song Writer     side braid, bindi, gold earrings, polka-dot top
+    tech        Clarity         high ponytail, glowing visor, cable
 
-There's no text label underneath, as requested. Everything is vector shapes,
-so no image files are needed and it stays sharp at any size.
+No text label underneath. Everything is vector shapes (no image files),
+so it stays sharp at any size.
+
+Public API (used by every page): Dancer(canvas, role, accent, accent2),
+.place(x, ground_y, height), .tick(dt), .draw(), .tag, .bbox()
 """
 import math
 
 from ..theme import blend, dim
 
-OUTLINE = "#140c1c"
-SKIN = "#ffdcc4"
-SKIN_SHADE = "#f2bba0"
+LINE = "#17111c"
+WHITE = "#ffffff"
 
 ROLES = {
-    #             hair color  outfit (None = page accent)  dance tempo (BPM)
-    "artist":     {"hair": "#ff6fb5", "outfit": None, "bpm": 116, "moves": ("mic_pump", "sway")},
-    "executive":  {"hair": "#2a1d2e", "outfit": "#151520", "bpm": 98, "moves": ("nod_point", "sway")},
-    "engineer":   {"hair": "#5b3cc4", "outfit": None, "bpm": 108, "moves": ("headbang", "sway")},
-    "producer":   {"hair": "#3a2418", "outfit": None, "bpm": 124, "moves": ("drum", "fist")},
-    "songwriter": {"hair": "#f4c36a", "outfit": None, "bpm": 92, "moves": ("write", "sway")},
-    "tech":       {"hair": "#c8d6ff", "outfit": "#1c2433", "bpm": 112, "moves": ("robot", "sway")},
+    "artist": {
+        "skin": "#c98d62", "hair": "#16161e", "hair_hi": "#4b4c66", "eyes": "#3d6fd6",
+        "style": "ribbons", "ribbon": "#f2a7c3", "top": "accent", "bottom": "#1b2030",
+        "bottom_style": "skirt", "mouth": "o", "brows": "thin", "bpm": 116, "moves": ("mic_pump", "sway"),
+    },
+    "executive": {
+        "skin": "#9a5d38", "hair": "#18181e", "hair_hi": "#45455a", "tips": "#6b1d2a", "eyes": "#e0577c",
+        "style": "twintails", "glasses": True, "top": "blazer", "tie": "#8c1c2b", "bottom": "#202027",
+        "bottom_style": "pants", "mouth": "grin", "brows": "thin", "choker": True, "bpm": 100,
+        "moves": ("point", "sway"),
+    },
+    "engineer": {
+        "skin": "#f4e7ee", "hair": "#f5f3fa", "hair_hi": "#c9cbe8", "eyes": "#6aa9ea", "style": "bob",
+        "top": "#121218", "bottom": "#121218", "bottom_style": "pants", "mouth": "flat", "brows": "none",
+        "lashes": True, "blush_lines": True, "headphones": True, "bpm": 106, "moves": ("headbang", "sway"),
+    },
+    "producer": {
+        "skin": "#9b603b", "hair": "#16161d", "hair_hi": "#403b58", "eyes": "#c4472f", "style": "clips",
+        "top": "hoodie", "bottom": "#24242c", "bottom_style": "pants", "mouth": "smug", "brows": "thin",
+        "bpm": 124, "moves": ("drum", "fist"),
+    },
+    "songwriter": {
+        "skin": "#d39869", "hair": "#121218", "hair_hi": "#3d3d52", "eyes": "#2b3340", "style": "braid",
+        "bindi": True, "earrings": True, "top": "polka", "top_color": "#2d4776", "bottom": "#2d4776",
+        "bottom_style": "long_skirt", "mouth": "neutral", "brows": "thick", "bpm": 92,
+        "moves": ("write", "sway"),
+    },
+    "tech": {
+        "skin": "#b6784d", "hair": "#1a1a22", "hair_hi": "#45465c", "eyes": "#7fe3ff", "style": "ponytail",
+        "visor": True, "top": "#1c2433", "bottom": "#1c2433", "bottom_style": "pants", "mouth": "smile",
+        "brows": "thin", "choker": True, "bpm": 112, "moves": ("robot", "sway"),
+    },
 }
 
 
@@ -37,20 +66,29 @@ class Dancer:
     def __init__(self, canvas, role, accent, accent2):
         self.canvas = canvas
         self.role = role if role in ROLES else "artist"
-        self.spec = ROLES[self.role]
+        self.s = ROLES[self.role]
         self.accent = accent
         self.accent2 = accent2
-        self.outfit = self.spec["outfit"] or blend(accent, "#000000", 0.35)
         self.time = 0.0
-        self.anchor = (0, 0)  # (x of feet center, y of ground)
-        self.height = 220
+        self.anchor = (0, 0)
+        self.height = 240
+        self.highlight = 0.0  # 0..1 glow, used by the Home line-up on hover
         self.tag = f"dancer{id(self)}"  # unique, so several dancers can share a canvas
 
     def place(self, x, y, height):
         self.anchor = (x, y)
         self.height = height
 
-    # ---- small math helpers ------------------------------------------------
+    def bbox(self):
+        """Rough clickable area (x1, y1, x2, y2)."""
+        x, g = self.anchor
+        return x - self.height * 0.3, g - self.height * 1.02, x + self.height * 0.3, g
+
+    def tick(self, dt):
+        self.time += dt
+        self.draw()
+
+    # ---- helpers -------------------------------------------------------------------
     @staticmethod
     def _limb(x, y, length, angle_deg):
         a = math.radians(angle_deg)
@@ -58,287 +96,483 @@ class Dancer:
 
     @staticmethod
     def _knee(hip, foot, seg, out_dir):
-        """Simple 2-bone leg: find the knee so both bones keep their length."""
         hx, hy = hip
         fx, fy = foot
-        d = math.hypot(fx - hx, fy - hy)
+        d = math.hypot(fx - hx, fy - hy) or 1
         mx, my = (hx + fx) / 2, (hy + fy) / 2
         bend = math.sqrt(max(0.0, seg * seg - (d / 2) ** 2))
-        if d == 0:
-            return mx, my
-        nx, ny = -(fy - hy) / d, (fx - hx) / d  # perpendicular
+        nx, ny = -(fy - hy) / d, (fx - hx) / d
         return mx + nx * bend * out_dir, my + ny * bend * out_dir
 
-    # ---- animation -----------------------------------------------------------
-    def tick(self, dt):
-        self.time += dt
-        self.draw()
+    def _poly(self, pts, fill, outline=LINE, width=None, smooth=True):
+        self.canvas.create_polygon(pts, fill=fill, outline=outline, width=width or self.lw, smooth=smooth,
+                                   tags=self.tag)
 
+    def _line(self, pts, fill, width, smooth=True, cap="round"):
+        self.canvas.create_line(pts, fill=fill, width=width, smooth=smooth, capstyle=cap, joinstyle="round",
+                                tags=self.tag)
+
+    def _oval(self, cx, cy, rx, ry, fill, outline="", width=1):
+        self.canvas.create_oval(cx - rx, cy - ry, cx + rx, cy + ry, fill=fill, outline=outline, width=width,
+                                tags=self.tag)
+
+    # ---- pose --------------------------------------------------------------------------
     def _pose(self):
-        """Work out joint angles for this moment of the dance."""
-        bps = self.spec["bpm"] / 60.0
-        beat = self.time * bps
+        beat = self.time * self.s["bpm"] / 60.0
         ph = beat * 2 * math.pi
-        # Switch between the role's two dance moves every 8 beats.
-        move = self.spec["moves"][int(beat // 8) % 2]
-        p = {
-            "bob": abs(math.sin(ph / 2)),  # dips on every beat
-            "sway": math.sin(ph / 2),      # side to side every 2 beats
-            "tilt": 7 * math.sin(ph / 2 + 0.6),
-            "l_up": 25, "l_lo": 15, "r_up": 25, "r_lo": 15,
-            "step": math.sin(ph / 2),
-            "blink": (self.time % 3.7) < 0.13,
-            "mouth": 0.5 + 0.5 * math.sin(ph),
-        }
-        # Arm angles are degrees measured from "hanging straight down":
-        # 90 = sticking straight out sideways, 180 = straight up,
-        # negative = swinging inward across the body.
+        move = self.s["moves"][int(beat // 8) % 2]
         s = math.sin(ph)
-        if move == "mic_pump":       # mic hand at the mouth, other arm waves
-            p.update(r_up=105, r_lo=205 + 8 * s, l_up=130 + 30 * s, l_lo=160 + 20 * s)
-        elif move == "sway":         # relaxed arm swing
-            p.update(l_up=20 + 20 * s, l_lo=35 + 25 * s, r_up=20 - 20 * s, r_lo=35 - 25 * s)
-        elif move == "nod_point":    # cool head nod with a point
-            p.update(tilt=10 * abs(s) - 5, r_up=95, r_lo=100 + 15 * s, l_up=15, l_lo=-25)
-        elif move == "headbang":     # both hands up
-            p.update(tilt=16 * s, l_up=150, l_lo=170 + 12 * s, r_up=150, r_lo=170 - 12 * s)
-        elif move == "drum":         # hits an invisible drum pad
+        # Arm angles: degrees from hanging straight down. 90 = out sideways,
+        # 180 = straight up, negative = across the body.
+        p = {"bob": abs(math.sin(ph / 2)), "sway": math.sin(ph / 2), "tilt": 6 * math.sin(ph / 2 + 0.6),
+             "l_up": 18, "l_lo": 10, "r_up": 18, "r_lo": 10, "step": math.sin(ph / 2),
+             "blink": (self.time % 3.9) < 0.12, "talk": 0.5 + 0.5 * math.sin(ph), "hair": math.sin(ph / 2 - 0.9)}
+        if move == "mic_pump":
+            p.update(r_up=100, r_lo=200 + 8 * s, l_up=125 + 30 * s, l_lo=160 + 20 * s)
+        elif move == "sway":
+            p.update(l_up=18 + 18 * s, l_lo=30 + 22 * s, r_up=18 - 18 * s, r_lo=30 - 22 * s)
+        elif move == "point":
+            p.update(tilt=8 * abs(s) - 4, r_up=60, r_lo=150 + 10 * s, l_up=12, l_lo=-30)
+        elif move == "headbang":
+            p.update(tilt=14 * s, l_up=150, l_lo=170 + 12 * s, r_up=150, r_lo=170 - 12 * s)
+        elif move == "drum":
             hit = max(0.0, s)
-            p.update(l_up=35, l_lo=-35 + 55 * hit, r_up=35, r_lo=-35 + 55 * (1 - hit))
-        elif move == "fist":         # fist pump
-            p.update(r_up=160 + 15 * s, r_lo=175 + 10 * s, l_up=20, l_lo=-30)
-        elif move == "write":        # notebook up, pencil scribbles
+            p.update(l_up=32, l_lo=-35 + 55 * hit, r_up=32, r_lo=-35 + 55 * (1 - hit))
+        elif move == "fist":
+            p.update(r_up=158 + 14 * s, r_lo=175 + 10 * s, l_up=18, l_lo=-30)
+        elif move == "write":
             scrib = math.sin(ph * 4)
-            p.update(l_up=40, l_lo=-65, r_up=30 + 4 * scrib, r_lo=-70 + 10 * scrib)
-        elif move == "robot":        # stiff robot arms
+            p.update(l_up=38, l_lo=-70, r_up=28 + 4 * scrib, r_lo=-72 + 10 * scrib)
+        elif move == "robot":
             up = s > 0
-            p.update(l_up=90, l_lo=180 if up else 90, r_up=90, r_lo=90 if up else 180,
-                     tilt=8 if up else -8, bob=0.3)
+            p.update(l_up=90, l_lo=180 if up else 90, r_up=90, r_lo=90 if up else 180, tilt=7 if up else -7, bob=0.3)
         return p
 
+    # ---- main draw ------------------------------------------------------------------------
     def draw(self):
         c = self.canvas
         c.delete(self.tag)
+        sp = self.s
         x0, ground = self.anchor
-        u = self.height / 8.0
+        H = self.height
+        u = H / 9.4                        # about 4.5 heads tall: anime proportions, not chibi
+        self.lw = max(1.5, u * 0.07)
         p = self._pose()
+        self.u, self.p = u, p
+        acc = self.accent
+        top = sp["top"]
+        if top in ("accent", "hoodie"):
+            self.top_col = blend(acc, "#000000", 0.25)   # outfit in the page colour
+        elif top == "blazer":
+            self.top_col = "#26262e"
+        elif top == "polka":
+            self.top_col = sp["top_color"]
+        else:
+            self.top_col = top                           # a plain colour
 
-        hip_x = x0 + p["sway"] * 0.35 * u
-        hip_y = ground - 2.05 * u + p["bob"] * 0.32 * u
-        sh_y = hip_y - 2.1 * u
-        sh_x = hip_x + p["sway"] * 0.15 * u
-        neck = (sh_x, sh_y - 0.1 * u)
-        head_r = 1.55 * u
+        hip_x = x0 + p["sway"] * 0.3 * u
+        hip_y = ground - 3.75 * u + p["bob"] * 0.25 * u
+        sh_x = hip_x + p["sway"] * 0.12 * u
+        sh_y = hip_y - 2.3 * u
+        neck = (sh_x, sh_y - 0.05 * u)
+        r = 1.12 * u                       # head radius
         tilt = math.radians(p["tilt"])
 
         def hp(dx, dy):
-            """A point on the head, rotated by the head tilt around the neck."""
-            hx = dx * math.cos(tilt) - dy * math.sin(tilt)
-            hy = dx * math.sin(tilt) + dy * math.cos(tilt)
-            return neck[0] + hx, neck[1] + hy
+            """Point on the head (offset from head centre), rotated by head tilt around the neck."""
+            ox, oy = dx, dy - 0.22 * u - r
+            return (neck[0] + ox * math.cos(tilt) - oy * math.sin(tilt),
+                    neck[1] + ox * math.sin(tilt) + oy * math.cos(tilt))
+        self.hp, self.r = hp, r
 
-        head_c = hp(0, -1.35 * u)
-        lw = max(2, u * 0.1)
-
-        # --- floor glow ------------------------------------------------------
+        # floor glow (+ extra glow when highlighted on the Home line-up)
+        hl = self.highlight
         for i in range(3, 0, -1):
-            w = (1.6 + i * 0.35) * u
-            c.create_oval(x0 - w, ground - 0.12 * u * i, x0 + w, ground + 0.12 * u * i,
-                          fill=dim(self.accent, 0.08 + 0.06 * (3 - i)), outline="", tags=self.tag)
+            w = (1.3 + i * 0.3 + hl * 0.5) * u
+            self._oval(x0, ground, w, 0.12 * u * i, dim(acc, 0.08 + 0.06 * (3 - i) + 0.15 * hl))
 
-        # --- back hair (long styles) ----------------------------------------
-        if self.role in ("artist", "songwriter", "engineer"):
-            length = 2.4 if self.role == "artist" else 1.6
-            pts = [*hp(-1.45 * u, -1.6 * u), *hp(-1.7 * u, -0.2 * u + length * 0.3 * u),
-                   *hp(-1.2 * u, length * 0.55 * u), *hp(1.2 * u, length * 0.55 * u),
-                   *hp(1.7 * u, -0.2 * u + length * 0.3 * u), *hp(1.45 * u, -1.6 * u)]
-            c.create_polygon(pts, fill=blend(self.spec["hair"], "#000000", 0.25), outline=OUTLINE,
-                             width=lw, smooth=True, tags=self.tag)
+        self._back_hair(hp, u, r, p)
+        self._legs(hip_x, hip_y, ground, u, p)
+        self._torso(sh_x, sh_y, hip_x, hip_y, u)
+        hands = self._arms(sh_x, sh_y, u, p)
+        # neck
+        self._line([neck[0], neck[1] + 0.25 * u, *hp(0, 0.75 * r)], blend(sp["skin"], "#000000", 0.12), u * 0.42)
+        if sp.get("choker"):
+            nx, ny = hp(0, 1.0 * r)
+            self._line([nx - 0.2 * u, ny, nx + 0.2 * u, ny], LINE, u * 0.1)
+        self._collar(sh_x, sh_y, u)
+        self._head(hp, u, r, p)
+        self._props(hands, u)
 
-        # --- legs --------------------------------------------------------------
-        seg = 1.12 * u
+    # ---- body parts --------------------------------------------------------------------------
+    def _legs(self, hip_x, hip_y, ground, u, p):
+        sp = self.s
+        seg = 1.85 * u
+        style = sp["bottom_style"]
         for side in (-1, 1):
-            hip = (hip_x + side * 0.42 * u, hip_y)
-            foot = (x0 + side * 0.62 * u + side * p["step"] * 0.18 * u, ground - 0.15 * u)
-            knee = self._knee(hip, foot, seg, -side)
-            pant = "#20202c" if self.role in ("executive", "tech") else blend(self.outfit, "#101018", 0.55)
-            c.create_line(*hip, *knee, *foot, fill=OUTLINE, width=u * 0.62, capstyle="round",
-                          joinstyle="round", tags=self.tag)
-            c.create_line(*hip, *knee, *foot, fill=pant, width=u * 0.48, capstyle="round",
-                          joinstyle="round", tags=self.tag)
-            # sneakers
+            hip = (hip_x + side * 0.32 * u, hip_y)
+            foot = (self.anchor[0] + side * 0.45 * u + side * p["step"] * 0.14 * u, ground - 0.12 * u)
+            if style == "long_skirt":
+                # only the ankles show below a long skirt
+                hem_y = hip_y + 3.0 * u
+                t = (hem_y - hip[1]) / max(1e-6, foot[1] - hip[1])
+                hip = (hip[0] + (foot[0] - hip[0]) * t, hem_y)
+                knee = ((hip[0] + foot[0]) / 2, (hip[1] + foot[1]) / 2)
+            else:
+                knee = self._knee(hip, foot, seg, -side)
+            col = sp["bottom"] if style == "pants" else self.s["skin"]
+            self._line([*hip, *knee, *foot], LINE, u * 0.62, smooth=False)
+            self._line([*hip, *knee, *foot], col, u * 0.48, smooth=False)
             fx, fy = foot
-            c.create_oval(fx - 0.48 * u + side * 0.12 * u, fy - 0.25 * u, fx + 0.48 * u + side * 0.12 * u,
-                          fy + 0.2 * u, fill=self.accent2 if self.role != "executive" else "#0b0b0b",
-                          outline=OUTLINE, width=lw, tags=self.tag)
+            shoe = "#f2f2f6" if self.role in ("artist", "producer") else "#121216"
+            self._oval(fx + side * 0.12 * u, fy, 0.36 * u, 0.16 * u, shoe, LINE, self.lw)
+        if style in ("skirt", "long_skirt"):
+            length = 1.3 if style == "skirt" else 3.15
+            w_top, w_bot = 0.62 * u, (1.15 if style == "skirt" else 1.0) * u
+            sw = p["sway"] * 0.15 * u
+            pts = [hip_x - w_top, hip_y - 0.2 * u, hip_x + w_top, hip_y - 0.2 * u,
+                   hip_x + w_bot + sw, hip_y + length * u, hip_x - w_bot + sw, hip_y + length * u]
+            self._poly(pts, sp["bottom"], smooth=False)
+            for k in (-0.4, 0.05, 0.5):  # pleats / folds
+                self._line([hip_x + k * w_top, hip_y, hip_x + k * w_bot + sw, hip_y + length * u * 0.95],
+                           blend(sp["bottom"], "#000000", 0.35), max(1, u * 0.04), smooth=False)
 
-        # --- torso -------------------------------------------------------------
-        tw_top, tw_bot = 1.15 * u, 0.85 * u
-        torso = [sh_x - tw_top, sh_y, sh_x + tw_top, sh_y, hip_x + tw_bot, hip_y + 0.15 * u,
-                 hip_x - tw_bot, hip_y + 0.15 * u]
-        c.create_polygon(torso, fill=self.outfit, outline=OUTLINE, width=lw, smooth=False, tags=self.tag)
-        # outfit details
-        if self.role == "executive":
-            c.create_polygon(sh_x - 0.35 * u, sh_y, sh_x + 0.35 * u, sh_y, sh_x, sh_y + 1.1 * u,
-                             fill="#f4f4f4", outline="", tags=self.tag)
-            c.create_polygon(sh_x - 0.12 * u, sh_y + 0.1 * u, sh_x + 0.12 * u, sh_y + 0.1 * u,
-                             sh_x + 0.16 * u, sh_y + 1.3 * u, sh_x, sh_y + 1.5 * u, sh_x - 0.16 * u,
-                             sh_y + 1.3 * u, fill=self.accent, outline="", tags=self.tag)
-            c.create_arc(sh_x - 0.7 * u, sh_y - 0.6 * u, sh_x + 0.7 * u, sh_y + 0.9 * u, start=200, extent=140,
-                         style="arc", outline="#ffd44a", width=max(2, u * 0.12), tags=self.tag)
+    def _torso(self, sx, sy, hx, hy, u):
+        sp = self.s
+        sw, ww, bw = 0.95 * u, 0.6 * u, 0.72 * u  # shoulders, waist, hips
+        pts = [sx - sw, sy + 0.1 * u, sx - sw * 0.98, sy + 0.05 * u, sx + sw * 0.98, sy + 0.05 * u, sx + sw, sy + 0.1 * u,
+               (sx + hx) / 2 + ww, (sy + hy) / 2 + 0.3 * u, hx + bw, hy + 0.05 * u,
+               hx - bw, hy + 0.05 * u, (sx + hx) / 2 - ww, (sy + hy) / 2 + 0.3 * u]
+        top = sp["top"]
+        fill = self.top_col
+        if top == "hoodie":
+            pts = [sx - sw * 1.1, sy + 0.1 * u, sx + sw * 1.1, sy + 0.1 * u, hx + bw * 1.25, hy + 0.35 * u,
+                   hx - bw * 1.25, hy + 0.35 * u]
+        self._poly(pts, fill, smooth=False)
+        if top == "blazer":
+            # white shirt + tie in the V, lapels
+            self._poly([sx - 0.32 * u, sy + 0.05 * u, sx + 0.32 * u, sy + 0.05 * u, sx, sy + 1.25 * u], "#f4f4f8",
+                       smooth=False)
+            self._poly([sx - 0.09 * u, sy + 0.2 * u, sx + 0.09 * u, sy + 0.2 * u, sx + 0.13 * u, sy + 1.05 * u,
+                        sx, sy + 1.25 * u, sx - 0.13 * u, sy + 1.05 * u], sp["tie"], smooth=False)
+            for side in (-1, 1):
+                self._line([sx + side * 0.32 * u, sy + 0.05 * u, sx + side * 0.12 * u, sy + 1.3 * u], LINE,
+                           max(1, u * 0.05), smooth=False)
+        elif top == "hoodie":
+            self._line([sx - 0.9 * u, hy - 0.2 * u, sx + 0.9 * u, hy - 0.2 * u], blend(fill, "#000000", 0.4),
+                       max(1, u * 0.06))
+            self._poly([sx - 0.55 * u, (sy + hy) / 2 + 0.2 * u, sx + 0.55 * u, (sy + hy) / 2 + 0.2 * u,
+                        sx + 0.65 * u, hy - 0.2 * u, sx - 0.65 * u, hy - 0.2 * u], blend(fill, "#000000", 0.18),
+                       smooth=False)  # front pocket
+            for dx in (-0.2, 0.2):
+                self._line([sx + dx * u, sy + 0.1 * u, sx + dx * u, sy + 0.8 * u], "#f0f0f4", max(1, u * 0.05))
+            self._line([sx - 0.5 * u, sy + 0.95 * u, sx + 0.5 * u, sy + 0.95 * u], self.accent2, max(2, u * 0.1))
+        elif top == "polka":
+            # polka dots + a patterned dupatta draped over one shoulder (reference 1)
+            for row in range(5):
+                ty = sy + 0.35 * u + row * 0.5 * u
+                t = (ty - sy) / (hy - sy)
+                half = sw + (bw - sw) * t - 0.25 * u
+                n = 4
+                for k in range(n):
+                    tx = sx - half + (2 * half) * (k + (0.5 if row % 2 else 0.0)) / n
+                    if abs(tx - sx) < half:
+                        self._oval(tx, ty, 0.09 * u, 0.09 * u, "#a49c86")
+            self._poly([sx - sw, sy + 0.1 * u, sx - sw * 0.35, sy + 0.05 * u, hx + bw * 0.1, hy + 0.1 * u,
+                        hx - bw * 0.55, hy + 0.15 * u], "#8c8467", smooth=False)
+            self._line([sx - sw * 0.35, sy + 0.05 * u, hx + bw * 0.1, hy + 0.1 * u], "#d8c79a", max(1, u * 0.06),
+                       smooth=False)
         else:
-            # glowing stripe across the chest in the page color
-            c.create_line(sh_x - tw_top * 0.9, sh_y + 0.75 * u, sh_x + tw_top * 0.9, sh_y + 0.75 * u,
-                          fill=self.accent2, width=max(2, u * 0.16), tags=self.tag)
-            if self.role == "engineer":  # hoodie strings
-                for dx in (-0.25, 0.25):
-                    c.create_line(sh_x + dx * u, sh_y + 0.05 * u, sh_x + dx * u, sh_y + 0.6 * u,
-                                  fill="#ffffff", width=max(1, u * 0.06), tags=self.tag)
+            # glowing accent stripe on plain tops
+            self._line([sx - 0.7 * u, sy + 1.0 * u, sx + 0.7 * u, sy + 1.0 * u], self.accent2, max(2, u * 0.08))
 
-        # --- arms ----------------------------------------------------------------
+    def _collar(self, sx, sy, u):
+        """Neckline drawn over the neck so the top looks worn, not pasted on."""
+        top = self.s["top"]
+        if top in ("blazer", "hoodie"):
+            return
+        self.canvas.create_arc(sx - 0.38 * u, sy - 0.25 * u, sx + 0.38 * u, sy + 0.35 * u, start=200, extent=140,
+                               style="arc", outline=LINE, width=self.lw, tags=self.tag)
+
+    def _arms(self, sx, sy, u, p):
+        sp = self.s
         hands = {}
+        sleeve = self.top_col if sp["top"] != "blazer" else "#26262e"
+        long_sleeve = sp["top"] in ("blazer", "hoodie", "polka") or self.role in ("tech", "engineer")
         for side, up, lo in ((-1, p["l_up"], p["l_lo"]), (1, p["r_up"], p["r_lo"])):
-            s = (sh_x + side * (tw_top - 0.15 * u), sh_y + 0.18 * u)
-            # side * angle: outward is to the left for the left arm, right for the right arm
-            e = self._limb(*s, 1.05 * u, side * up)
-            h = self._limb(*e, 1.0 * u, side * lo)
-            c.create_line(*s, *e, *h, fill=OUTLINE, width=u * 0.5, capstyle="round", joinstyle="round", tags=self.tag)
-            c.create_line(*s, *e, fill=self.outfit, width=u * 0.38, capstyle="round", tags=self.tag)
-            c.create_line(*e, *h, fill=SKIN if self.role != "engineer" else self.outfit, width=u * 0.32,
-                          capstyle="round", tags=self.tag)
-            c.create_oval(h[0] - 0.22 * u, h[1] - 0.22 * u, h[0] + 0.22 * u, h[1] + 0.22 * u, fill=SKIN,
-                          outline=OUTLINE, width=lw, tags=self.tag)
+            s0 = (sx + side * 0.88 * u, sy + 0.25 * u)
+            e = self._limb(*s0, 1.3 * u, side * up)
+            h = self._limb(*e, 1.2 * u, side * lo)
+            self._line([*s0, *e, *h], LINE, u * 0.46, smooth=False)
+            self._line([*s0, *e], sleeve, u * 0.34)
+            self._line([*e, *h], sleeve if long_sleeve else sp["skin"], u * 0.29)
+            self._oval(*h, 0.2 * u, 0.2 * u, sp["skin"], LINE, self.lw)
             hands[side] = (h, e)
+        return hands
 
-        self._draw_hand_props(hands, u, lw)
+    # ---- hair (behind the head) ----------------------------------------------------------------------
+    def _back_hair(self, hp, u, r, p):
+        sp, style = self.s, self.s["style"]
+        hair = sp["hair"]
+        sway = p["hair"] * 0.25 * u
+        if style in ("ribbons", "clips"):
+            L = 4.6 * u
+            pts = [*hp(-1.08 * r, -0.4 * r), *hp(-1.25 * r, 0.9 * r), *hp(-1.15 * r + sway, L * 0.7),
+                   *hp(-0.7 * r + sway, L), *hp(0.7 * r + sway, L), *hp(1.15 * r + sway, L * 0.7),
+                   *hp(1.25 * r, 0.9 * r), *hp(1.08 * r, -0.4 * r)]
+            self._poly(pts, blend(hair, "#000000", 0.2))
+        elif style == "twintails":
+            for side in (-1, 1):
+                base = hp(side * 1.05 * r, 0.25 * r)
+                pts = [*base, *hp(side * 1.5 * r + sway, 1.4 * r), *hp(side * 1.5 * r + sway, 2.7 * r),
+                       *hp(side * 1.22 * r + sway, 3.3 * r), *hp(side * 0.98 * r + sway, 2.6 * r),
+                       *hp(side * 0.85 * r, 1.0 * r)]
+                self._poly(pts, hair)
+                # dark wine-red ombre tips (reference 5): two steps so it fades
+                for frac, col in ((0.0, blend(hair, sp["tips"], 0.55)), (0.45, sp["tips"])):
+                    y1 = 2.25 + frac * 0.8
+                    tip = [*hp(side * 1.5 * r + sway, y1 * r), *hp(side * 1.5 * r + sway, 2.7 * r),
+                           *hp(side * 1.22 * r + sway, 3.3 * r), *hp(side * 0.98 * r + sway, 2.6 * r),
+                           *hp(side * 1.0 * r + sway, y1 * r)]
+                    self._poly(tip, col, outline="")
+        elif style == "bob":
+            pts = [*hp(-1.12 * r, -0.5 * r), *hp(-1.22 * r, 0.6 * r), *hp(-1.12 * r + sway * 0.3, 1.25 * r),
+                   *hp(1.12 * r + sway * 0.3, 1.25 * r), *hp(1.22 * r, 0.6 * r), *hp(1.12 * r, -0.5 * r)]
+            self._poly(pts, blend(hair, "#9fa3c8", 0.25), smooth=False)
+        elif style == "braid":
+            pts = [*hp(-1.05 * r, -0.4 * r), *hp(-1.15 * r, 0.9 * r), *hp(-0.8 * r, 1.4 * r),
+                   *hp(0.8 * r, 1.4 * r), *hp(1.15 * r, 0.9 * r), *hp(1.05 * r, -0.4 * r)]
+            self._poly(pts, blend(hair, "#000000", 0.2))
+        elif style == "ponytail":
+            top = hp(0.2 * r, -1.0 * r)
+            pts = [*top, *hp(1.0 * r + sway, -1.2 * r), *hp(1.4 * r + sway, 0.2 * r),
+                   *hp(1.2 * r + sway * 1.5, 1.8 * r), *hp(0.75 * r + sway, 0.4 * r), *hp(0.4 * r, -0.6 * r)]
+            self._poly(pts, hair)
 
-        # --- neck + head ---------------------------------------------------------
-        c.create_line(neck[0], neck[1] + 0.2 * u, *hp(0, -0.35 * u), fill=SKIN_SHADE, width=u * 0.45, tags=self.tag)
-        hx, hy = head_c
-        c.create_oval(hx - head_r, hy - head_r * 0.98, hx + head_r, hy + head_r * 0.95, fill=SKIN,
-                      outline=OUTLINE, width=lw, tags=self.tag)
-        self._draw_face(hp, u, lw, p)
-        self._draw_hair_and_hat(hp, u, lw)
-
-    # ---- face ------------------------------------------------------------------
-    def _draw_face(self, hp, u, lw, p):
-        c = self.canvas
-        eye_y = -1.05 * u
+    # ---- head, face, front hair -------------------------------------------------------------------------
+    def _head(self, hp, u, r, p):
+        sp = self.s
+        skin = sp["skin"]
+        # anime face: round cranium, cheeks tapering to a soft pointed chin
+        face = [*hp(-0.95 * r, -0.25 * r), *hp(-0.88 * r, -0.8 * r), *hp(-0.4 * r, -1.05 * r),
+                *hp(0.4 * r, -1.05 * r), *hp(0.88 * r, -0.8 * r), *hp(0.95 * r, -0.25 * r),
+                *hp(0.86 * r, 0.35 * r), *hp(0.5 * r, 0.78 * r), *hp(0.0, 0.98 * r),
+                *hp(-0.5 * r, 0.78 * r), *hp(-0.86 * r, 0.35 * r)]
+        self._poly(face, skin)
+        # ears
         for side in (-1, 1):
-            ex, ey = hp(side * 0.62 * u, eye_y)
-            if self.role == "executive":
-                continue  # sunglasses cover the eyes (drawn below)
+            ex, ey = hp(side * 0.95 * r, 0.05 * r)
+            self._oval(ex, ey, 0.14 * r, 0.22 * r, skin, LINE, self.lw)
+            if sp.get("earrings"):  # big gold chandbali earrings (reference 1)
+                gx, gy = hp(side * 0.98 * r, 0.42 * r)
+                self._oval(gx, gy + 0.18 * r, 0.2 * r, 0.22 * r, "", "#d9b04a", max(2, u * 0.08))
+                self._oval(gx, gy + 0.2 * r, 0.1 * r, 0.1 * r, "#d9b04a")
+            if self.role == "executive" and side == 1:  # ear piercings (reference 5)
+                for k in range(2):
+                    px, py = hp(1.02 * r, (-0.08 + k * 0.17) * r)
+                    self._oval(px, py, 0.035 * r, 0.035 * r, "#e8e8ee")
+        self._face(hp, u, r, p)
+        self._front_hair(hp, u, r, p)
+        self._head_extras(hp, u, r)
+
+    def _face(self, hp, u, r, p):
+        sp = self.s
+        c = self.canvas
+        lw = self.lw
+        eye_y = 0.12 * r
+        for side in (-1, 1):
+            ex, ey = hp(side * 0.42 * r, eye_y)
+            w, h = 0.24 * r, 0.3 * r
             if p["blink"]:
-                c.create_line(ex - 0.28 * u, ey, ex + 0.28 * u, ey, fill=OUTLINE, width=max(2, u * 0.1), tags=self.tag)
+                self._line([ex - w * 1.1, ey + 0.05 * r, ex, ey + 0.12 * r, ex + w * 1.1, ey + 0.05 * r], LINE,
+                           max(2, u * 0.09))
                 continue
-            w, h = 0.3 * u, 0.42 * u
-            c.create_oval(ex - w, ey - h, ex + w, ey + h, fill="#ffffff", outline=OUTLINE, width=lw, tags=self.tag)
-            c.create_oval(ex - w * 0.8, ey - h * 0.7, ex + w * 0.8, ey + h * 0.95, fill=self.accent,
-                          outline="", tags=self.tag)
-            c.create_oval(ex - w * 0.42, ey - h * 0.2, ex + w * 0.42, ey + h * 0.6, fill=OUTLINE,
-                          outline="", tags=self.tag)
-            # the big anime sparkle highlights
-            c.create_oval(ex - w * 0.55, ey - h * 0.6, ex - w * 0.05, ey - h * 0.1, fill="#ffffff",
-                          outline="", tags=self.tag)
-            c.create_oval(ex + w * 0.15, ey + h * 0.35, ex + w * 0.45, ey + h * 0.6, fill="#ffffff",
-                          outline="", tags=self.tag)
-            # blush
-            bx, by = hp(side * 0.95 * u, -0.45 * u)
-            c.create_oval(bx - 0.25 * u, by - 0.09 * u, bx + 0.25 * u, by + 0.09 * u, fill="#ffaab8",
-                          outline="", tags=self.tag)
-        if self.role == "executive":
-            pts = [*hp(-1.15 * u, -1.3 * u), *hp(1.15 * u, -1.3 * u), *hp(1.0 * u, -0.8 * u),
-                   *hp(0.15 * u, -0.85 * u), *hp(0, -1.0 * u), *hp(-0.15 * u, -0.85 * u), *hp(-1.0 * u, -0.8 * u)]
-            c.create_polygon(pts, fill="#08080c", outline=OUTLINE, width=lw, tags=self.tag)
-            c.create_line(*hp(-0.85 * u, -1.2 * u), *hp(-0.45 * u, -1.2 * u), fill=self.accent2,
-                          width=max(1, u * 0.07), tags=self.tag)
-        if self.role == "tech":
-            pts = [*hp(-1.4 * u, -1.35 * u), *hp(1.4 * u, -1.35 * u), *hp(1.35 * u, -0.8 * u),
-                   *hp(-1.35 * u, -0.8 * u)]
-            c.create_polygon(pts, fill=dim(self.accent2, 0.55), outline=self.accent2, width=lw, tags=self.tag)
-        # mouth: opens a little on the beat (singing / vibing)
-        mx, my = hp(0, -0.3 * u)
-        mo = 0.06 * u + 0.16 * u * p["mouth"]
-        c.create_oval(mx - 0.17 * u, my - mo / 2, mx + 0.17 * u, my + mo / 2, fill="#a8324a",
-                      outline=OUTLINE, width=max(1, lw - 1), tags=self.tag)
+            # white of the eye
+            self._oval(ex, ey, w, h, WHITE)
+            # iris: dark rim, colour, lighter lower half (gloss)
+            ix = ex - side * 0.03 * r
+            self._oval(ix, ey + 0.03 * r, w * 0.82, h * 0.92, blend(sp["eyes"], "#000000", 0.45))
+            self._oval(ix, ey + 0.06 * r, w * 0.68, h * 0.78, sp["eyes"])
+            self._oval(ix, ey + 0.16 * r, w * 0.5, h * 0.42, blend(sp["eyes"], "#ffffff", 0.35))
+            self._oval(ix, ey + 0.02 * r, w * 0.3, h * 0.36, blend(sp["eyes"], "#000000", 0.7))
+            # sparkle highlights
+            self._oval(ix - side * 0.08 * r, ey - 0.08 * r, w * 0.24, h * 0.2, WHITE)
+            self._oval(ix + side * 0.09 * r, ey + 0.13 * r, w * 0.11, h * 0.09, WHITE)
+            # heavy upper lash line with a flick at the outer corner
+            lash = [ex - side * w * 1.05, ey - h * 0.35, ex - side * w * 0.3, ey - h * 1.02,
+                    ex + side * w * 0.5, ey - h * 1.0, ex + side * w * 1.2, ey - h * 0.55,
+                    ex + side * w * 1.35, ey - h * 0.85]
+            self._line(lash, LINE, max(2.5, u * 0.11))
+            if sp.get("lashes"):  # spiky lashes (reference 4)
+                for k in range(3):
+                    bx = ex + side * w * (0.4 + k * 0.3)
+                    self._line([bx, ey - h * 0.95, bx + side * w * 0.35, ey - h * 1.35], LINE, max(1.5, u * 0.05))
+                    lx = ex + side * w * (-0.2 + k * 0.4)
+                    self._line([lx, ey + h * 0.95, lx + side * w * 0.15, ey + h * 1.25], LINE, max(1, u * 0.03))
+            # lower lid
+            c.create_arc(ex - w * 0.9, ey - h * 0.3, ex + w * 0.9, ey + h * 1.0, start=225 if side < 0 else 260,
+                         extent=55, style="arc", outline=LINE, width=max(1, lw * 0.6), tags=self.tag)
+            # eyebrows
+            if sp["brows"] != "none":
+                bw = max(2, u * (0.12 if sp["brows"] == "thick" else 0.06))
+                bx, by = hp(side * 0.42 * r, -0.33 * r)
+                self._line([bx - side * 0.22 * r, by + 0.05 * r, bx, by - 0.04 * r, bx + side * 0.25 * r, by + 0.02 * r],
+                           blend(sp["hair"], "#000000", 0.3) if sp["style"] != "bob" else "#b8b9d6", bw)
+            # blush (+ the little hatch lines from references 4 and 5)
+            blx, bly = hp(side * 0.55 * r, 0.42 * r)
+            self._oval(blx, bly, 0.2 * r, 0.08 * r, blend(sp["skin"], "#ff5c7a", 0.35))
+            if sp.get("blush_lines") or self.role == "executive":
+                for k in range(3):
+                    hx = blx - 0.1 * r + k * 0.09 * r
+                    self._line([hx, bly - 0.05 * r, hx - 0.04 * r, bly + 0.05 * r], blend(sp["skin"], "#e0405c", 0.6), 1)
+        # nose: tiny shadow stroke
+        nx, ny = hp(0.03 * r, 0.42 * r)
+        self._line([nx, ny - 0.06 * r, nx - 0.04 * r, ny + 0.03 * r], blend(sp["skin"], "#000000", 0.35), max(1, lw * 0.7))
+        self._mouth(hp, u, r, p)
+        if sp.get("bindi"):
+            bx, by = hp(0, -0.38 * r)
+            self._oval(bx, by, 0.06 * r, 0.06 * r, "#1a0f14")
 
-    # ---- hair / hats / headphones -------------------------------------------
-    def _draw_hair_and_hat(self, hp, u, lw):
-        c = self.canvas
-        hair = self.spec["hair"]
-        # spiky anime bangs
-        bangs = [*hp(-1.6 * u, -1.2 * u), *hp(-1.5 * u, -2.4 * u), *hp(-0.6 * u, -3.05 * u),
-                 *hp(0.5 * u, -3.1 * u), *hp(1.45 * u, -2.5 * u), *hp(1.65 * u, -1.25 * u),
-                 *hp(1.2 * u, -1.75 * u), *hp(0.9 * u, -1.4 * u), *hp(0.45 * u, -1.95 * u),
-                 *hp(0.1 * u, -1.5 * u), *hp(-0.4 * u, -2.0 * u), *hp(-0.75 * u, -1.45 * u),
-                 *hp(-1.15 * u, -1.85 * u)]
-        c.create_polygon(bangs, fill=hair, outline=OUTLINE, width=lw, tags=self.tag)
-        # hair shine
-        c.create_line(*hp(-0.9 * u, -2.6 * u), *hp(-0.3 * u, -2.85 * u), fill=blend(hair, "#ffffff", 0.55),
-                      width=max(2, u * 0.12), capstyle="round", tags=self.tag)
+    def _mouth(self, hp, u, r, p):
+        sp = self.s
+        mx, my = hp(0, 0.66 * r)
+        kind = sp["mouth"]
+        talk = p["talk"]
+        lip = blend(sp["skin"], "#a23a3a", 0.5)
+        if kind == "o":
+            self._oval(mx, my, 0.06 * r, (0.05 + 0.04 * talk) * r, "#8a2f3d", LINE, max(1, self.lw * 0.6))
+        elif kind == "grin":  # big open smile with tongue (reference 5)
+            open_h = (0.14 + 0.08 * talk) * r
+            self._poly([mx - 0.2 * r, my - 0.05 * r, mx + 0.2 * r, my - 0.05 * r, mx + 0.1 * r, my + open_h,
+                        mx - 0.1 * r, my + open_h], "#7b2234", smooth=True)
+            self._oval(mx, my + open_h * 0.7, 0.09 * r, 0.05 * r, "#e88a9a")
+        elif kind == "smug":  # cat-like smirk (reference 3)
+            self._line([mx - 0.18 * r, my - 0.02 * r, mx - 0.07 * r, my + 0.05 * r, mx, my, mx + 0.07 * r,
+                        my + 0.05 * r, mx + 0.18 * r, my - 0.04 * r], LINE, max(1.5, u * 0.05))
+        elif kind == "smile":
+            self._line([mx - 0.15 * r, my - 0.02 * r, mx, my + 0.07 * r, mx + 0.15 * r, my - 0.02 * r], LINE,
+                       max(1.5, u * 0.05))
+        elif kind == "flat":  # deadpan (reference 4)
+            self._line([mx - 0.06 * r, my + 0.02 * r, mx + 0.06 * r, my], LINE, max(1.5, u * 0.045), smooth=False)
+        else:  # neutral full lips (reference 1)
+            self._poly([mx - 0.16 * r, my, mx, my - 0.05 * r, mx + 0.16 * r, my, mx, my + 0.09 * r], lip)
+            self._line([mx - 0.15 * r, my + 0.01 * r, mx + 0.15 * r, my + 0.01 * r], blend(lip, "#000000", 0.4),
+                       max(1, u * 0.03), smooth=False)
 
-        if self.role == "producer":  # backwards cap
-            cap = [*hp(-1.55 * u, -2.0 * u), *hp(-1.3 * u, -2.95 * u), *hp(0, -3.3 * u),
-                   *hp(1.3 * u, -2.95 * u), *hp(1.55 * u, -2.0 * u)]
-            c.create_polygon(cap, fill=self.accent, outline=OUTLINE, width=lw, smooth=True, tags=self.tag)
-            c.create_line(*hp(-1.55 * u, -2.0 * u), *hp(-2.3 * u, -1.75 * u), fill=OUTLINE,
-                          width=u * 0.28, capstyle="round", tags=self.tag)
-            c.create_line(*hp(-1.55 * u, -2.0 * u), *hp(-2.25 * u, -1.78 * u), fill=self.accent2,
-                          width=u * 0.18, capstyle="round", tags=self.tag)
-        if self.role == "songwriter":  # beret
-            beret = [*hp(-1.7 * u, -2.3 * u), *hp(-0.8 * u, -3.35 * u), *hp(0.9 * u, -3.4 * u),
-                     *hp(1.75 * u, -2.6 * u), *hp(0.5 * u, -2.35 * u)]
-            c.create_polygon(beret, fill=self.accent, outline=OUTLINE, width=lw, smooth=True, tags=self.tag)
-            c.create_line(*hp(0.1 * u, -3.35 * u), *hp(0.15 * u, -3.6 * u), fill=OUTLINE, width=max(2, u * 0.12),
-                          tags=self.tag)
-        if self.role in ("engineer", "artist"):
-            # headphones (engineer) / small earpiece mic (artist uses handheld)
-            if self.role == "engineer":
-                band = [*hp(-1.75 * u, -1.0 * u), *hp(-1.6 * u, -2.8 * u), *hp(0, -3.45 * u),
-                        *hp(1.6 * u, -2.8 * u), *hp(1.75 * u, -1.0 * u)]
-                c.create_line(band, fill=OUTLINE, width=u * 0.34, smooth=True, tags=self.tag)
-                c.create_line(band, fill="#2c2c3a", width=u * 0.2, smooth=True, tags=self.tag)
-                for side in (-1, 1):
-                    ex, ey = hp(side * 1.68 * u, -0.95 * u)
-                    c.create_oval(ex - 0.42 * u, ey - 0.62 * u, ex + 0.42 * u, ey + 0.62 * u,
-                                  fill=self.accent, outline=OUTLINE, width=lw, tags=self.tag)
-                    c.create_oval(ex - 0.2 * u, ey - 0.3 * u, ex + 0.2 * u, ey + 0.3 * u,
-                                  fill=self.accent2, outline="", tags=self.tag)
-        if self.role == "tech":  # antenna earpiece
-            ax, ay = hp(1.6 * u, -1.6 * u)
-            tx, ty = hp(2.0 * u, -3.0 * u)
-            c.create_line(ax, ay, tx, ty, fill="#c0c8d8", width=max(2, u * 0.1), tags=self.tag)
-            c.create_oval(tx - 0.16 * u, ty - 0.16 * u, tx + 0.16 * u, ty + 0.16 * u, fill=self.accent2,
-                          outline=OUTLINE, tags=self.tag)
+    def _front_hair(self, hp, u, r, p):
+        sp, style = self.s, self.s["style"]
+        hair, hi = sp["hair"], sp["hair_hi"]
+        sway = p["hair"] * 0.12 * u
+        if style == "bob":
+            # blunt straight bangs + straight sides (reference 4)
+            top = [*hp(-1.12 * r, 0.75 * r), *hp(-1.12 * r, -0.55 * r), *hp(-0.9 * r, -1.08 * r),
+                   *hp(0, -1.25 * r), *hp(0.9 * r, -1.08 * r), *hp(1.12 * r, -0.55 * r), *hp(1.12 * r, 0.75 * r),
+                   *hp(0.85 * r, 0.75 * r), *hp(0.8 * r, -0.22 * r), *hp(-0.8 * r, -0.22 * r), *hp(-0.85 * r, 0.75 * r)]
+            self._poly(top, hair, smooth=False)
+            for k in range(-3, 4):
+                x = k * 0.22 * r
+                self._line([*hp(x, -0.85 * r), *hp(x + 0.02 * r, -0.24 * r)], blend(hair, "#8c90c0", 0.45), 1, smooth=False)
+        else:
+            # pointed anime bangs; middle part for the braid style (reference 1)
+            if style == "braid":
+                bangs = [*hp(-1.1 * r, 0.5 * r), *hp(-1.08 * r, -0.5 * r), *hp(-0.7 * r, -1.1 * r), *hp(0, -1.2 * r),
+                         *hp(0.7 * r, -1.1 * r), *hp(1.08 * r, -0.5 * r), *hp(1.1 * r, 0.5 * r),
+                         *hp(0.86 * r, 0.1 * r), *hp(0.55 * r, -0.65 * r), *hp(0.05 * r, -0.95 * r),
+                         *hp(-0.05 * r, -0.95 * r), *hp(-0.55 * r, -0.65 * r), *hp(-0.86 * r, 0.1 * r)]
+            else:
+                bangs = [*hp(-1.12 * r, 0.6 * r), *hp(-1.1 * r, -0.55 * r), *hp(-0.75 * r, -1.12 * r),
+                         *hp(0, -1.25 * r), *hp(0.75 * r, -1.12 * r), *hp(1.1 * r, -0.55 * r), *hp(1.12 * r, 0.6 * r),
+                         *hp(0.9 * r, -0.05 * r), *hp(0.78 * r, -0.2 * r), *hp(0.55 * r, 0.05 * r),
+                         *hp(0.4 * r, -0.4 * r), *hp(0.18 * r, -0.1 * r), *hp(0.02 * r, -0.5 * r),
+                         *hp(-0.2 * r, -0.12 * r), *hp(-0.38 * r, -0.42 * r), *hp(-0.6 * r, 0.02 * r),
+                         *hp(-0.78 * r, -0.25 * r), *hp(-0.92 * r, -0.05 * r)]
+            self._poly(bangs, hair, smooth=False)
+            # long side locks framing the face
+            for side in (-1, 1):
+                if style == "braid" and side == 1:
+                    continue
+                lock = [*hp(side * 0.9 * r, -0.2 * r), *hp(side * 1.1 * r, 0.5 * r),
+                        *hp(side * 1.0 * r + sway, 1.8 * r), *hp(side * 0.86 * r + sway, 2.3 * r),
+                        *hp(side * 0.82 * r, 1.0 * r), *hp(side * 0.78 * r, 0.2 * r)]
+                self._poly(lock, hair)
+        # glossy shine band across the crown (in every reference)
+        self._line([*hp(-0.62 * r, -0.92 * r), *hp(-0.25 * r, -1.06 * r), *hp(0.15 * r, -1.07 * r)], hi,
+                   max(2, u * 0.12))
+        self._line([*hp(0.35 * r, -1.02 * r), *hp(0.55 * r, -0.96 * r)], hi, max(2, u * 0.1))
+        if style == "braid":  # thick braid over the right shoulder
+            x0, y0 = hp(0.95 * r, 0.6 * r)
+            for k in range(7):
+                bx = x0 + 0.05 * u * k + sway * k * 0.1
+                by = y0 + k * 0.42 * u
+                self._oval(bx, by, 0.26 * u, 0.24 * u, hair, LINE, self.lw)
+                self._line([bx - 0.18 * u, by - 0.05 * u, bx + 0.12 * u, by + 0.12 * u], hi, max(1, u * 0.04))
 
-    # ---- things held in hands ---------------------------------------------------
-    def _draw_hand_props(self, hands, u, lw):
-        c = self.canvas
+    def _head_extras(self, hp, u, r):
+        sp = self.s
+        style = sp["style"]
+        if style == "ribbons":  # pink ribbons on both sides (reference 2)
+            for side in (-1, 1):
+                bx, by = hp(side * 0.95 * r, -0.85 * r)
+                for flip in (-1, 1):
+                    self._poly([bx, by, bx + flip * 0.38 * r, by - 0.22 * r, bx + flip * 0.38 * r, by + 0.18 * r],
+                               sp["ribbon"], smooth=False)
+                self._oval(bx, by, 0.08 * r, 0.08 * r, blend(sp["ribbon"], "#000000", 0.2), LINE, self.lw)
+                self._poly([bx, by, bx - 0.1 * r, by + 0.55 * r, bx + 0.06 * r, by + 0.5 * r], sp["ribbon"],
+                           smooth=False)
+        elif style == "clips":  # two silver hair clips (reference 3)
+            for k in range(2):
+                cx, cy = hp(-0.62 * r + k * 0.1 * r, -0.72 * r + k * 0.16 * r)
+                self._line([cx - 0.16 * r, cy - 0.06 * r, cx + 0.16 * r, cy + 0.06 * r], "#dadce6", max(2, u * 0.1),
+                           smooth=False)
+        if sp.get("glasses"):  # thick black frames (reference 5)
+            for side in (-1, 1):
+                gx, gy = hp(side * 0.42 * r, 0.12 * r)
+                self.canvas.create_rectangle(gx - 0.33 * r, gy - 0.3 * r, gx + 0.33 * r, gy + 0.3 * r, outline=LINE,
+                                             width=max(2, u * 0.09), tags=self.tag)
+            self._line([*hp(-0.09 * r, 0.05 * r), *hp(0.09 * r, 0.05 * r)], LINE, max(2, u * 0.07), smooth=False)
+        if sp.get("headphones"):
+            band = [*hp(-1.15 * r, 0.0), *hp(-1.05 * r, -1.0 * r), *hp(0, -1.4 * r), *hp(1.05 * r, -1.0 * r),
+                    *hp(1.15 * r, 0.0)]
+            self._line(band, LINE, u * 0.26)
+            self._line(band, "#2b2b36", u * 0.15)
+            for side in (-1, 1):
+                ex, ey = hp(side * 1.12 * r, 0.1 * r)
+                self._oval(ex, ey, 0.26 * r, 0.42 * r, self.accent, LINE, self.lw)
+                self._oval(ex, ey, 0.13 * r, 0.22 * r, self.accent2)
+        if sp.get("visor"):
+            pts = [*hp(-1.08 * r, -0.08 * r), *hp(1.08 * r, -0.08 * r), *hp(1.02 * r, 0.32 * r), *hp(-1.02 * r, 0.32 * r)]
+            self._poly(pts, dim(self.accent2, 0.55), outline=self.accent2, smooth=False)
+            self._line([*hp(-0.8 * r, 0.02 * r), *hp(-0.2 * r, 0.02 * r)], WHITE, max(1, u * 0.04), smooth=False)
+
+    # ---- props in hand ---------------------------------------------------------------------------------
+    def _props(self, hands, u):
         (rh, re), (lh, le) = hands[1], hands[-1]
-        if self.role == "artist":  # handheld microphone
+        role = self.role
+        if role == "artist":  # microphone
             ang = math.atan2(rh[1] - re[1], rh[0] - re[0])
-            tip = (rh[0] + math.cos(ang) * 0.7 * u, rh[1] + math.sin(ang) * 0.7 * u)
-            c.create_line(*rh, *tip, fill="#1b1b22", width=u * 0.26, capstyle="round", tags=self.tag)
-            c.create_oval(tip[0] - 0.3 * u, tip[1] - 0.3 * u, tip[0] + 0.3 * u, tip[1] + 0.3 * u,
-                          fill="#c9d2e0", outline=OUTLINE, width=lw, tags=self.tag)
-            c.create_line(tip[0] - 0.2 * u, tip[1], tip[0] + 0.2 * u, tip[1], fill="#7a8494", tags=self.tag)
-        elif self.role == "executive":  # phone
-            c.create_rectangle(rh[0] - 0.18 * u, rh[1] - 0.45 * u, rh[0] + 0.18 * u, rh[1] + 0.1 * u,
-                               fill="#0d0d12", outline=self.accent, width=max(1, lw - 1), tags=self.tag)
-        elif self.role == "producer":  # drumsticks
+            tip = (rh[0] + math.cos(ang) * 0.6 * u, rh[1] + math.sin(ang) * 0.6 * u)
+            self._line([*rh, *tip], "#1b1b22", u * 0.2)
+            self._oval(*tip, 0.24 * u, 0.24 * u, "#c9d2e0", LINE, self.lw)
+        elif role == "executive":  # pointing finger (reference 5) + phone in the other hand
+            ang = math.atan2(rh[1] - re[1], rh[0] - re[0])
+            self._line([*rh, rh[0] + math.cos(ang) * 0.32 * u, rh[1] + math.sin(ang) * 0.32 * u], self.s["skin"],
+                       u * 0.09)
+            self.canvas.create_rectangle(lh[0] - 0.15 * u, lh[1] - 0.35 * u, lh[0] + 0.15 * u, lh[1] + 0.08 * u,
+                                         fill="#0d0d12", outline=self.accent, width=max(1, self.lw - 0.5), tags=self.tag)
+        elif role == "producer":  # drumsticks
             for h, e in ((rh, re), (lh, le)):
                 ang = math.atan2(h[1] - e[1], h[0] - e[0])
-                tip = (h[0] + math.cos(ang) * 1.1 * u, h[1] + math.sin(ang) * 1.1 * u)
-                c.create_line(*h, *tip, fill="#e8c890", width=max(2, u * 0.12), capstyle="round", tags=self.tag)
-        elif self.role == "songwriter":  # notebook + pencil
+                self._line([*h, h[0] + math.cos(ang) * 1.0 * u, h[1] + math.sin(ang) * 1.0 * u], "#e8c890",
+                           max(2, u * 0.09))
+        elif role == "songwriter":  # notebook + pencil
             x, y = lh
-            c.create_polygon(x - 0.55 * u, y - 0.75 * u, x + 0.35 * u, y - 0.85 * u, x + 0.45 * u, y + 0.35 * u,
-                             x - 0.45 * u, y + 0.45 * u, fill="#f8f4e8", outline=OUTLINE, width=lw, tags=self.tag)
+            self._poly([x - 0.45 * u, y - 0.65 * u, x + 0.3 * u, y - 0.72 * u, x + 0.38 * u, y + 0.3 * u,
+                        x - 0.37 * u, y + 0.38 * u], "#f8f4e8", smooth=False)
             for k in range(4):
-                yy = y - 0.5 * u + k * 0.22 * u
-                c.create_line(x - 0.38 * u, yy, x + 0.3 * u, yy - 0.05 * u, fill=self.accent, tags=self.tag)
+                yy = y - 0.45 * u + k * 0.19 * u
+                self._line([x - 0.3 * u, yy, x + 0.24 * u, yy - 0.04 * u], self.accent, 1, smooth=False)
             x2, y2 = rh
-            c.create_line(x2, y2, x2 - 0.5 * u, y2 - 0.5 * u, fill="#ffcc33", width=max(2, u * 0.14), tags=self.tag)
-        elif self.role == "tech":  # glowing cable
-            c.create_line(*lh, lh[0] - 0.6 * u, lh[1] + 0.8 * u, lh[0] - 0.2 * u, lh[1] + 1.6 * u,
-                          fill=self.accent2, width=max(2, u * 0.1), smooth=True, tags=self.tag)
+            self._line([x2, y2, x2 - 0.42 * u, y2 - 0.42 * u], "#ffcc33", max(2, u * 0.1))
+        elif role == "tech":  # glowing cable
+            self._line([*lh, lh[0] - 0.5 * u, lh[1] + 0.7 * u, lh[0] - 0.15 * u, lh[1] + 1.4 * u], self.accent2,
+                       max(2, u * 0.08))
